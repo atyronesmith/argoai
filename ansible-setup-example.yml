@@ -1,0 +1,117 @@
+---
+# ansible-playbook -i inventory setup-argoai-pipeline.yml
+- name: Deploy AI-Enhanced Document Processing Pipeline
+  hosts: localhost
+  gather_facts: yes
+  vars:
+    project_name: argo-ai-demo
+    crc_memory: 16384
+    crc_cpus: 6
+    crc_disk: 60
+    ollama_model: llama3.2:3b
+
+  tasks:
+    - name: Ensure CRC is installed
+      stat:
+        path: /usr/local/bin/crc
+      register: crc_binary
+
+    - name: Fail if CRC not installed
+      fail:
+        msg: "CRC not installed. Please install from https://console.redhat.com/openshift/create/local"
+      when: not crc_binary.stat.exists
+
+    - name: Check CRC status
+      command: crc status
+      register: crc_status
+      ignore_errors: yes
+
+    - name: Setup CRC if not initialized
+      command: crc setup
+      when: crc_status.rc != 0
+
+    - name: Start CRC with resources
+      command: "crc start --cpus {{ crc_cpus }} --memory {{ crc_memory }} --disk-size {{ crc_disk }}"
+      when: "'Running' not in crc_status.stdout"
+
+    - name: Get kubeadmin password
+      shell: crc console --credentials | grep "kubeadmin" | sed -n 's/.*-p \([^ ]*\).*/\1/p'
+      register: kubeadmin_password
+
+    - name: Login to OpenShift
+      k8s_auth:
+        host: https://api.crc.testing:6443
+        username: kubeadmin
+        password: "{{ kubeadmin_password.stdout }}"
+        validate_certs: no
+      register: k8s_auth_results
+
+    - name: Create project
+      k8s:
+        name: "{{ project_name }}"
+        api_version: project.openshift.io/v1
+        kind: Project
+        state: present
+
+    - name: Apply Argo installation
+      k8s:
+        src: /tmp/argo-install.yaml
+        namespace: "{{ project_name }}"
+        state: present
+
+    - name: Deploy Ollama
+      k8s:
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: ollama
+            namespace: "{{ project_name }}"
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: ollama
+            template:
+              metadata:
+                labels:
+                  app: ollama
+              spec:
+                containers:
+                - name: ollama
+                  image: docker.io/ollama/ollama:latest
+                  ports:
+                  - containerPort: 11434
+                  env:
+                  - name: OLLAMA_HOST
+                    value: "0.0.0.0"
+                  resources:
+                    requests:
+                      memory: "4Gi"
+                      cpu: "2"
+                    limits:
+                      memory: "8Gi"
+                      cpu: "4"
+
+    - name: Wait for Ollama to be ready
+      k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ project_name }}"
+        label_selectors:
+          - app=ollama
+        wait: true
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+
+    - name: Load AI model
+      uri:
+        url: "http://ollama-service.{{ project_name }}.svc.cluster.local:11434/api/pull"
+        method: POST
+        body_format: json
+        body:
+          name: "{{ ollama_model }}"
+      retries: 3
+      delay: 10

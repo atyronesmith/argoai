@@ -1,0 +1,632 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: ai-document-processor
+  namespace: argo-ai-demo
+  labels:
+    app: ai-workflow
+    version: "1.0"
+spec:
+  serviceAccountName: argo
+  entrypoint: process-documents
+  
+  # Volume claim templates for shared storage
+  volumeClaimTemplates:
+  - metadata:
+      name: workdir
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+  
+  arguments:
+    parameters:
+    - name: doc-url
+      value: "https://raw.githubusercontent.com/example/sample-doc.txt"
+    - name: model
+      value: "llama3.2:3b"
+  
+  templates:
+  - name: process-documents
+    dag:
+      tasks:
+      # Step 1: Initialize Ollama model
+      - name: init-model
+        template: init-ollama-model
+        arguments:
+          parameters:
+          - name: model
+            value: "{{workflow.parameters.model}}"
+      
+      # Step 2: Ingest document
+      - name: ingest-document
+        dependencies: [init-model]
+        template: document-ingestion
+        arguments:
+          parameters:
+          - name: doc-url
+            value: "{{workflow.parameters.doc-url}}"
+      
+      # Step 3: AI Classification with OpenShift monitoring
+      - name: classify-document
+        dependencies: [ingest-document]
+        template: llm-classify-monitored
+        arguments:
+          artifacts:
+          - name: document
+            from: "{{tasks.ingest-document.outputs.artifacts.document}}"
+          parameters:
+          - name: model
+            value: "{{workflow.parameters.model}}"
+      
+      # Step 4: Extract information with caching
+      - name: extract-info
+        dependencies: [classify-document]
+        template: llm-extract-cached
+        arguments:
+          artifacts:
+          - name: document
+            from: "{{tasks.ingest-document.outputs.artifacts.document}}"
+          parameters:
+          - name: doc-type
+            value: "{{tasks.classify-document.outputs.parameters.classification}}"
+          - name: model
+            value: "{{workflow.parameters.model}}"
+      
+      # Step 5: Parallel processing based on classification
+      - name: process-by-type
+        dependencies: [extract-info]
+        template: route-processor
+        arguments:
+          parameters:
+          - name: doc-type
+            value: "{{tasks.classify-document.outputs.parameters.classification}}"
+          - name: priority
+            value: "{{tasks.classify-document.outputs.parameters.priority}}"
+          artifacts:
+          - name: extracted-data
+            from: "{{tasks.extract-info.outputs.artifacts.extracted}}"
+      
+      # Step 6: Generate final report
+      - name: generate-report
+        dependencies: [process-by-type]
+        template: generate-final-report
+        arguments:
+          artifacts:
+          - name: processed-data
+            from: "{{tasks.process-by-type.outputs.artifacts.result}}"
+          parameters:
+          - name: model
+            value: "{{workflow.parameters.model}}"
+  
+  # Initialize Ollama model
+  - name: init-ollama-model
+    inputs:
+      parameters:
+      - name: model
+    container:
+      image: registry.access.redhat.com/ubi8/ubi:latest
+      command: [sh, -c]
+      args:
+      - |
+        # Install curl
+        dnf install -y curl
+        
+        # Check if model exists, if not pull it
+        echo "Checking for model {{inputs.parameters.model}}..."
+        
+        # Wait for Ollama to be ready
+        until curl -s http://ollama-service:11434/api/tags > /dev/null; do
+          echo "Waiting for Ollama service..."
+          sleep 5
+        done
+        
+        # Check if model is already loaded
+        if curl -s http://ollama-service:11434/api/tags | grep -q "{{inputs.parameters.model}}"; then
+          echo "Model {{inputs.parameters.model}} already loaded"
+        else
+          echo "Pulling model {{inputs.parameters.model}}..."
+          curl -X POST http://ollama-service:11434/api/pull \
+            -d '{"name": "{{inputs.parameters.model}}"}' \
+            -H "Content-Type: application/json"
+        fi
+        
+        echo "Model {{inputs.parameters.model}} ready"
+  
+  # Document ingestion with OpenShift storage
+  - name: document-ingestion
+    inputs:
+      parameters:
+      - name: doc-url
+    outputs:
+      artifacts:
+      - name: document
+        path: /tmp/document.txt
+        s3:
+          bucket: argo-artifacts
+          key: "{{workflow.name}}/document.txt"
+    container:
+      image: registry.access.redhat.com/ubi8/python-39:latest
+      command: [python]
+      args:
+      - -c
+      - |
+        import urllib.request
+        import os
+        
+        url = "{{inputs.parameters.doc-url}}"
+        
+        # Download document
+        print(f"Downloading document from {url}")
+        urllib.request.urlretrieve(url, '/tmp/document.txt')
+        
+        # Get file stats
+        file_size = os.path.getsize('/tmp/document.txt')
+        print(f"Document downloaded: {file_size} bytes")
+        
+        # Add OpenShift labels as metadata
+        with open('/tmp/metadata.txt', 'w') as f:
+            f.write(f"source: {url}\n")
+            f.write(f"size: {file_size}\n")
+            f.write(f"project: argo-ai-demo\n")
+  
+  # LLM Classification with monitoring
+  - name: llm-classify-monitored
+    inputs:
+      artifacts:
+      - name: document
+        path: /tmp/document.txt
+      parameters:
+      - name: model
+    outputs:
+      parameters:
+      - name: classification
+        valueFrom:
+          path: /tmp/classification.txt
+      - name: priority
+        valueFrom:
+          path: /tmp/priority.txt
+      artifacts:
+      - name: metrics
+        path: /tmp/metrics.json
+    container:
+      image: registry.access.redhat.com/ubi8/python-39:latest
+      command: [python]
+      args:
+      - -c
+      - |
+        import json
+        import urllib.request
+        import time
+        
+        start_time = time.time()
+        
+        # Read document
+        with open('/tmp/document.txt', 'r') as f:
+            content = f.read()
+        
+        # Classification prompt
+        prompt = """Classify this document into one of these categories: 
+        invoice, contract, report, correspondence, technical_doc, other.
+        Also determine priority: urgent, normal, low.
+        
+        Document excerpt: """ + content[:1500] + """
+        
+        Respond ONLY with JSON:
+        {"category": "...", "priority": "...", "confidence": 0.0-1.0}
+        """
+        
+        # Call Ollama
+        data = {
+            "model": "{{inputs.parameters.model}}",
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.3,
+                "top_p": 0.9
+            }
+        }
+        
+        req = urllib.request.Request(
+            'http://ollama-service:11434/api/generate',
+            data=json.dumps(data).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                result = json.loads(response.read())
+                response_text = result['response']
+            
+            # Parse response
+            try:
+                parsed = json.loads(response_text)
+                category = parsed.get('category', 'other')
+                priority = parsed.get('priority', 'normal')
+                confidence = parsed.get('confidence', 0.5)
+            except:
+                # Fallback parsing if JSON is malformed
+                category = 'other'
+                priority = 'normal'
+                confidence = 0.5
+                if 'invoice' in response_text.lower():
+                    category = 'invoice'
+                elif 'contract' in response_text.lower():
+                    category = 'contract'
+                elif 'report' in response_text.lower():
+                    category = 'report'
+                if 'urgent' in response_text.lower():
+                    priority = 'urgent'
+        except Exception as e:
+            print(f"Error: {e}")
+            category = 'other'
+            priority = 'normal'
+            confidence = 0.0
+        
+        # Calculate metrics
+        elapsed_time = time.time() - start_time
+        
+        # Save outputs
+        with open('/tmp/classification.txt', 'w') as f:
+            f.write(category)
+        with open('/tmp/priority.txt', 'w') as f:
+            f.write(priority)
+        
+        # Save metrics for OpenShift monitoring
+        metrics = {
+            "classification_time": elapsed_time,
+            "category": category,
+            "priority": priority,
+            "confidence": confidence,
+            "model": "{{inputs.parameters.model}}",
+            "timestamp": time.time()
+        }
+        
+        with open('/tmp/metrics.json', 'w') as f:
+            json.dump(metrics, f)
+        
+        print(f"Classification complete: {category} ({priority}) - Confidence: {confidence:.2f}")
+        print(f"Processing time: {elapsed_time:.2f}s")
+  
+  # Cached extraction with OpenShift ConfigMap
+  - name: llm-extract-cached
+    inputs:
+      artifacts:
+      - name: document
+        path: /tmp/document.txt
+      parameters:
+      - name: doc-type
+      - name: model
+    outputs:
+      artifacts:
+      - name: extracted
+        path: /tmp/extracted.json
+        s3:
+          bucket: argo-artifacts
+          key: "{{workflow.name}}/extracted-{{inputs.parameters.doc-type}}.json"
+    container:
+      image: registry.access.redhat.com/ubi8/python-39:latest
+      command: [python]
+      args:
+      - -c
+      - |
+        import json
+        import urllib.request
+        import hashlib
+        
+        doc_type = "{{inputs.parameters.doc-type}}"
+        
+        with open('/tmp/document.txt', 'r') as f:
+            content = f.read()
+        
+        # Create cache key
+        cache_key = hashlib.md5(f"{doc_type}:{content[:500]}".encode()).hexdigest()
+        
+        # Define extraction templates
+        extraction_templates = {
+            "invoice": {
+                "fields": ["vendor", "amount", "due_date", "invoice_number", "line_items"],
+                "prompt": "Extract vendor name, total amount, due date, invoice number, and line items"
+            },
+            "contract": {
+                "fields": ["parties", "term", "value", "obligations", "termination_clause"],
+                "prompt": "Extract contracting parties, contract term, total value, key obligations, and termination terms"
+            },
+            "report": {
+                "fields": ["executive_summary", "findings", "recommendations", "metrics"],
+                "prompt": "Extract executive summary, key findings, recommendations, and performance metrics"
+            },
+            "technical_doc": {
+                "fields": ["overview", "requirements", "architecture", "dependencies"],
+                "prompt": "Extract technical overview, system requirements, architecture description, and dependencies"
+            },
+            "correspondence": {
+                "fields": ["sender", "recipient", "subject", "action_items", "deadline"],
+                "prompt": "Extract sender, recipient, main subject, action items, and any deadlines"
+            },
+            "other": {
+                "fields": ["summary", "key_points", "entities", "dates"],
+                "prompt": "Extract summary, key points, mentioned entities, and important dates"
+            }
+        }
+        
+        template = extraction_templates.get(doc_type, extraction_templates['other'])
+        
+        prompt = f"""Extract structured information from this {doc_type}.
+        {template['prompt']}
+        
+        Document: {content[:2500]}
+        
+        Return ONLY valid JSON with these fields: {json.dumps(template['fields'])}
+        """
+        
+        # Call Ollama for extraction
+        data = {
+            "model": "{{inputs.parameters.model}}",
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.2,
+                "top_p": 0.95
+            }
+        }
+        
+        req = urllib.request.Request(
+            'http://ollama-service:11434/api/generate',
+            data=json.dumps(data).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                result = json.loads(response.read())
+                extracted_text = result['response']
+            
+            # Try to parse as JSON
+            try:
+                extracted_json = json.loads(extracted_text)
+            except:
+                # If not valid JSON, create structured output
+                extracted_json = {"raw_extraction": extracted_text}
+        except Exception as e:
+            print(f"Extraction error: {e}")
+            extracted_json = {"error": str(e)}
+        
+        # Structure the output
+        extraction = {
+            "document_type": doc_type,
+            "cache_key": cache_key,
+            "extracted_data": extracted_json,
+            "model_used": "{{inputs.parameters.model}}",
+            "extraction_template": template['fields']
+        }
+        
+        with open('/tmp/extracted.json', 'w') as f:
+            json.dump(extraction, f, indent=2)
+        
+        print(f"Extraction complete for {doc_type} document")
+        print(f"Cache key: {cache_key}")
+  
+  # Route processor with OpenShift-native features
+  - name: route-processor
+    inputs:
+      parameters:
+      - name: doc-type
+      - name: priority
+      artifacts:
+      - name: extracted-data
+        path: /tmp/extracted.json
+    outputs:
+      artifacts:
+      - name: result
+        path: /tmp/result.json
+        s3:
+          bucket: argo-artifacts
+          key: "{{workflow.name}}/processed-result.json"
+    container:
+      image: registry.access.redhat.com/ubi8/python-39:latest
+      command: [python]
+      args:
+      - -c
+      - |
+        import json
+        import time
+        
+        doc_type = "{{inputs.parameters.doc-type}}"
+        priority = "{{inputs.parameters.priority}}"
+        
+        with open('/tmp/extracted.json', 'r') as f:
+            data = json.load(f)
+        
+        # Process based on type and priority
+        processing_rules = {
+            "urgent": {
+                "sla_hours": 4,
+                "escalation": "immediate",
+                "notifications": ["email", "slack", "sms"],
+                "approval_required": True
+            },
+            "normal": {
+                "sla_hours": 24,
+                "escalation": "standard",
+                "notifications": ["email"],
+                "approval_required": False
+            },
+            "low": {
+                "sla_hours": 72,
+                "escalation": "none",
+                "notifications": [],
+                "approval_required": False
+            }
+        }
+        
+        rules = processing_rules.get(priority, processing_rules['normal'])
+        
+        # Simulate processing
+        result = {
+            "status": "processed",
+            "document_type": doc_type,
+            "priority": priority,
+            "processing_rules": rules,
+            "data": data,
+            "processed_at": time.time(),
+            "next_steps": [],
+            "openshift_project": "argo-ai-demo"
+        }
+        
+        # Add type-specific next steps
+        if doc_type == "invoice" and priority == "urgent":
+            result["next_steps"].append("Fast-track payment approval")
+            result["next_steps"].append("Notify finance team")
+        elif doc_type == "contract":
+            result["next_steps"].append("Legal review required")
+            result["next_steps"].append("Schedule stakeholder meeting")
+        elif doc_type == "report":
+            result["next_steps"].append("Distribute to leadership")
+            result["next_steps"].append("Schedule review session")
+        
+        with open('/tmp/result.json', 'w') as f:
+            json.dump(result, f, indent=2)
+        
+        print(f"Processed {doc_type} with {priority} priority")
+        print(f"SLA: {rules['sla_hours']} hours")
+  
+  # Generate final report
+  - name: generate-final-report
+    inputs:
+      artifacts:
+      - name: processed-data
+        path: /tmp/processed.json
+      parameters:
+      - name: model
+    outputs:
+      artifacts:
+      - name: report
+        path: /tmp/report.md
+        s3:
+          bucket: argo-artifacts
+          key: "{{workflow.name}}/final-report.md"
+      - name: summary
+        path: /tmp/summary.json
+        s3:
+          bucket: argo-artifacts
+          key: "{{workflow.name}}/summary.json"
+    container:
+      image: registry.access.redhat.com/ubi8/python-39:latest
+      command: [python]
+      args:
+      - -c
+      - |
+        import json
+        import urllib.request
+        from datetime import datetime
+        
+        with open('/tmp/processed.json', 'r') as f:
+            data = json.load(f)
+        
+        # Generate executive summary
+        prompt = f"""Create a professional executive summary report based on this processed document data.
+        
+        Include:
+        1. Document Overview
+        2. Key Findings
+        3. Priority Assessment
+        4. Recommended Actions
+        5. Timeline and Next Steps
+        
+        Data: {json.dumps(data, indent=2)[:3000]}
+        
+        Format as professional markdown with headers and bullet points.
+        Make it concise but comprehensive.
+        """
+        
+        api_data = {
+            "model": "{{inputs.parameters.model}}",
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.4
+            }
+        }
+        
+        req = urllib.request.Request(
+            'http://ollama-service:11434/api/generate',
+            data=json.dumps(api_data).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                result = json.loads(response.read())
+                ai_summary = result['response']
+        except Exception as e:
+            print(f"Error generating summary: {e}")
+            ai_summary = "Error generating AI summary"
+        
+        # Create final report
+        report = f"""# AI Document Processing Report
+        
+        **Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        **Workflow**: {{{{workflow.name}}}}
+        **OpenShift Project**: argo-ai-demo
+        
+        ---
+        
+        {ai_summary}
+        
+        ---
+        
+        ## Processing Metadata
+        
+        - **Document Type**: {data.get('document_type', 'Unknown')}
+        - **Priority Level**: {data.get('priority', 'Normal')}
+        - **Processing Status**: {data.get('status', 'Complete')}
+        - **Model Used**: {{{{inputs.parameters.model}}}}
+        
+        ## Processing Rules Applied
+        
+        {json.dumps(data.get('processing_rules', {}), indent=2)}
+        
+        ## Next Steps
+        
+        {chr(10).join(['- ' + step for step in data.get('next_steps', [])])}
+        
+        ## OpenShift Integration Notes
+        
+        This document was processed using the AI-enhanced workflow running on OpenShift Local (CRC).
+        All artifacts are stored in MinIO and accessible via OpenShift Routes.
+        
+        ### Access Artifacts
+        
+        - Document: `argo-artifacts/{{{{workflow.name}}}}/document.txt`
+        - Extracted Data: `argo-artifacts/{{{{workflow.name}}}}/extracted-{data.get('document_type', 'unknown')}.json`
+        - Processed Result: `argo-artifacts/{{{{workflow.name}}}}/processed-result.json`
+        - This Report: `argo-artifacts/{{{{workflow.name}}}}/final-report.md`
+        """
+        
+        with open('/tmp/report.md', 'w') as f:
+            f.write(report)
+        
+        # Create summary JSON
+        summary = {
+            "workflow_id": "{{workflow.name}}",
+            "completion_time": datetime.now().isoformat(),
+            "document_type": data.get('document_type'),
+            "priority": data.get('priority'),
+            "status": "completed",
+            "artifacts": {
+                "report": "final-report.md",
+                "extracted_data": f"extracted-{data.get('document_type', 'unknown')}.json",
+                "processed_result": "processed-result.json"
+            },
+            "model": "{{inputs.parameters.model}}",
+            "project": "argo-ai-demo"
+        }
+        
+        with open('/tmp/summary.json', 'w') as f:
+            json.dump(summary, f, indent=2)
+        
+        print("Final report generated successfully")
+        print(f"Document type: {data.get('document_type')}")
+        print(f"Priority: {data.get('priority')}")

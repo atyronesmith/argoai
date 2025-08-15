@@ -1,0 +1,107 @@
+# Secrets and credentials
+.env
+.env.local
+*.pem
+*.key
+*.crt
+pull-secret.txt
+pull-secret.json
+*-credentials.txt
+*-credentials.json
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.swp
+*.swo
+*~
+.DS_Store
+
+# CRC specific
+.crc/
+crc-*
+
+# Editor directories
+.vscode/
+.idea/
+*.sublime-*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# MinIO data (if running locally)
+minio-data/
+.minio/
+
+# Workflow artifacts (local testing)
+artifacts/
+workflow-artifacts/
+
+# Ansible
+*.retry
+ansible/*.log
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+terraform.tfvars
+
+# Helm
+*.tgz
+charts/*.lock
+
+# Node.js (if any frontend components)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS generated files
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# CRC/OpenShift specific
+kubeconfig
+.kube/
+oc-cache/
+
+# Build artifacts
+bin/
+build/
+dist/
+target/
+
+# Test results
+coverage/
+.coverage
+*.cover
+.pytest_cache/
+test-results/
+
+# Documentation build
+docs/_build/
+site/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environment specific
+.env.*
+!.env.example
+
+# Security scan results
+security-scan-results/
+vulnerability-reports/
