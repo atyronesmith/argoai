@@ -1,0 +1,80 @@
+{{- if .Values.argoEvents.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "ai-document-pipeline.serviceAccountName" . }}-events
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: argo-events
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "ai-document-pipeline.fullname" . }}-events
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: argo-events
+rules:
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - workflows
+      - workflowtemplates
+      - cronworkflows
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - eventsources
+      - sensors
+      - eventbus
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - pods/log
+      - configmaps
+      - secrets
+      - services
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+      - patch
+      - delete
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "ai-document-pipeline.fullname" . }}-events
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: argo-events
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "ai-document-pipeline.fullname" . }}-events
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "ai-document-pipeline.serviceAccountName" . }}-events
+    namespace: {{ include "ai-document-pipeline.namespace" . }}
+{{- end }}

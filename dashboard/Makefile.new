@@ -1,0 +1,300 @@
+# AI Workflow Dashboard Makefile
+# Clear separation between Development and Production operations
+
+#=============================================================================
+# CONFIGURATION
+#=============================================================================
+PROJECT_NAME := ai-workflow-dashboard
+
+# Load registry configuration
+SECRETS_DIR := ../secrets
+REGISTRY_CONF := $(SECRETS_DIR)/registry.conf
+
+ifneq ("$(wildcard $(REGISTRY_CONF))","")
+    include $(REGISTRY_CONF)
+    REGISTRY := $(REGISTRY_URL)/$(REGISTRY_ORG)
+else
+    REGISTRY := quay.io/aasmith
+    $(warning Using default registry: $(REGISTRY))
+endif
+
+# Git versioning
+GIT_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "latest")
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
+GIT_COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
+
+# Tools
+PODMAN := $(shell which podman 2>/dev/null || echo "podman")
+KUBECTL := $(shell which kubectl 2>/dev/null || which oc 2>/dev/null || echo "kubectl")
+NPM := $(shell which npm 2>/dev/null || echo "npm")
+
+# Colors
+RED := \033[0;31m
+GREEN := \033[0;32m
+YELLOW := \033[1;33m
+BLUE := \033[0;34m
+PURPLE := \033[0;35m
+NC := \033[0m # No Color
+
+#=============================================================================
+# DEFAULT HELP
+#=============================================================================
+.PHONY: help
+help:
+	@echo "$(BLUE)╔═══════════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(BLUE)║          AI Workflow Dashboard - Build & Deploy               ║$(NC)"
+	@echo "$(BLUE)╚═══════════════════════════════════════════════════════════════╝$(NC)"
+	@echo ""
+	@echo "$(GREEN)DEVELOPMENT COMMANDS:$(NC)"
+	@echo "  $(YELLOW)make dev-build$(NC)          Build images with :latest tag"
+	@echo "  $(YELLOW)make dev-push$(NC)           Push images with :latest tag"
+	@echo "  $(YELLOW)make dev-deploy$(NC)         Deploy to dev namespace with :latest"
+	@echo "  $(YELLOW)make dev-all$(NC)            Build, push, and deploy for dev"
+	@echo ""
+	@echo "$(PURPLE)PRODUCTION COMMANDS:$(NC)"
+	@echo "  $(YELLOW)make prod-build$(NC)         Build images with git version tag"
+	@echo "  $(YELLOW)make prod-push$(NC)          Push images with git version tag"
+	@echo "  $(YELLOW)make prod-deploy$(NC)        Deploy to prod with specific version"
+	@echo "  $(YELLOW)make prod-all$(NC)           Build, push, and deploy for prod"
+	@echo ""
+	@echo "$(BLUE)LOCAL DEVELOPMENT:$(NC)"
+	@echo "  $(YELLOW)make install$(NC)            Install npm dependencies"
+	@echo "  $(YELLOW)make run-local$(NC)          Run locally with npm"
+	@echo "  $(YELLOW)make test$(NC)               Run tests"
+	@echo "  $(YELLOW)make clean$(NC)              Clean build artifacts"
+	@echo ""
+	@echo "$(RED)Current Configuration:$(NC)"
+	@echo "  Registry: $(REGISTRY)"
+	@echo "  Git Version: $(GIT_VERSION)"
+	@echo "  Git Branch: $(GIT_BRANCH)"
+
+#=============================================================================
+# DEVELOPMENT NAMESPACE AND IMAGES
+#=============================================================================
+DEV_NAMESPACE := argo-ai-dev
+DEV_BACKEND_IMAGE := $(REGISTRY)/$(PROJECT_NAME)-backend:latest
+DEV_FRONTEND_IMAGE := $(REGISTRY)/$(PROJECT_NAME)-frontend:latest
+
+#=============================================================================
+# PRODUCTION NAMESPACE AND IMAGES
+#=============================================================================
+PROD_NAMESPACE := argo-ai-prod
+PROD_BACKEND_IMAGE := $(REGISTRY)/$(PROJECT_NAME)-backend:$(GIT_VERSION)
+PROD_FRONTEND_IMAGE := $(REGISTRY)/$(PROJECT_NAME)-frontend:$(GIT_VERSION)
+
+#=============================================================================
+# DEVELOPMENT COMMANDS - Using :latest tag
+#=============================================================================
+.PHONY: dev-build
+dev-build: ## Build images for DEVELOPMENT with :latest tag
+	@echo "$(GREEN)════════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(GREEN)Building DEVELOPMENT images with tag: latest$(NC)"
+	@echo "$(GREEN)════════════════════════════════════════════════════════════════$(NC)"
+	@echo "Building backend..."
+	$(PODMAN) build \
+		--build-arg VERSION=latest \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		-t $(DEV_BACKEND_IMAGE) \
+		-f backend/Dockerfile backend
+	@echo "$(GREEN)✓ Backend built: $(DEV_BACKEND_IMAGE)$(NC)"
+	@echo ""
+	@echo "Building frontend..."
+	$(PODMAN) build \
+		--build-arg VERSION=latest \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		-t $(DEV_FRONTEND_IMAGE) \
+		-f frontend/Dockerfile frontend
+	@echo "$(GREEN)✓ Frontend built: $(DEV_FRONTEND_IMAGE)$(NC)"
+
+.PHONY: dev-push
+dev-push: ## Push DEVELOPMENT images to registry
+	@echo "$(GREEN)════════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(GREEN)Pushing DEVELOPMENT images$(NC)"
+	@echo "$(GREEN)════════════════════════════════════════════════════════════════$(NC)"
+	$(PODMAN) push $(DEV_BACKEND_IMAGE)
+	@echo "$(GREEN)✓ Pushed: $(DEV_BACKEND_IMAGE)$(NC)"
+	$(PODMAN) push $(DEV_FRONTEND_IMAGE)
+	@echo "$(GREEN)✓ Pushed: $(DEV_FRONTEND_IMAGE)$(NC)"
+
+.PHONY: dev-deploy
+dev-deploy: ## Deploy to DEVELOPMENT namespace
+	@echo "$(GREEN)════════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(GREEN)Deploying to DEVELOPMENT (namespace: $(DEV_NAMESPACE))$(NC)"
+	@echo "$(GREEN)════════════════════════════════════════════════════════════════$(NC)"
+	@# Create namespace if it doesn't exist
+	$(KUBECTL) create namespace $(DEV_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	@# Apply deployments with latest tag
+	$(KUBECTL) apply -f k8s/backend-deployment.yaml -n $(DEV_NAMESPACE)
+	$(KUBECTL) apply -f k8s/frontend-deployment.yaml -n $(DEV_NAMESPACE)
+	@# Update images to ensure latest
+	$(KUBECTL) set image deployment/ai-dashboard-backend \
+		backend=$(DEV_BACKEND_IMAGE) -n $(DEV_NAMESPACE)
+	$(KUBECTL) set image deployment/ai-dashboard-frontend \
+		frontend=$(DEV_FRONTEND_IMAGE) -n $(DEV_NAMESPACE)
+	@echo "$(GREEN)✓ Deployed to development$(NC)"
+
+.PHONY: dev-all
+dev-all: ## Complete DEVELOPMENT workflow: build, push, deploy
+	@echo "$(GREEN)╔═══════════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(GREEN)║             DEVELOPMENT DEPLOYMENT WORKFLOW                    ║$(NC)"
+	@echo "$(GREEN)╚═══════════════════════════════════════════════════════════════╝$(NC)"
+	@$(MAKE) dev-build
+	@$(MAKE) dev-push
+	@$(MAKE) dev-deploy
+	@echo "$(GREEN)✓ Development deployment complete!$(NC)"
+
+#=============================================================================
+# PRODUCTION COMMANDS - Using git version tags
+#=============================================================================
+.PHONY: prod-build
+prod-build: ## Build images for PRODUCTION with git version tag
+	@echo "$(PURPLE)════════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(PURPLE)Building PRODUCTION images with tag: $(GIT_VERSION)$(NC)"
+	@echo "$(PURPLE)════════════════════════════════════════════════════════════════$(NC)"
+	@if [ "$(GIT_VERSION)" = "latest" ]; then \
+		echo "$(RED)WARNING: No git tag found, using 'latest'$(NC)"; \
+		echo "$(RED)For production, please tag your release: git tag v1.0.0$(NC)"; \
+	fi
+	@echo "Building backend..."
+	$(PODMAN) build \
+		--build-arg VERSION=$(GIT_VERSION) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		-t $(PROD_BACKEND_IMAGE) \
+		-f backend/Dockerfile backend
+	@echo "$(PURPLE)✓ Backend built: $(PROD_BACKEND_IMAGE)$(NC)"
+	@echo ""
+	@echo "Building frontend..."
+	$(PODMAN) build \
+		--build-arg VERSION=$(GIT_VERSION) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		-t $(PROD_FRONTEND_IMAGE) \
+		-f frontend/Dockerfile frontend
+	@echo "$(PURPLE)✓ Frontend built: $(PROD_FRONTEND_IMAGE)$(NC)"
+
+.PHONY: prod-push
+prod-push: ## Push PRODUCTION images to registry
+	@echo "$(PURPLE)════════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(PURPLE)Pushing PRODUCTION images$(NC)"
+	@echo "$(PURPLE)════════════════════════════════════════════════════════════════$(NC)"
+	$(PODMAN) push $(PROD_BACKEND_IMAGE)
+	@echo "$(PURPLE)✓ Pushed: $(PROD_BACKEND_IMAGE)$(NC)"
+	$(PODMAN) push $(PROD_FRONTEND_IMAGE)
+	@echo "$(PURPLE)✓ Pushed: $(PROD_FRONTEND_IMAGE)$(NC)"
+
+.PHONY: prod-deploy
+prod-deploy: ## Deploy to PRODUCTION namespace (with confirmation)
+	@echo "$(RED)════════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(RED)⚠️  PRODUCTION DEPLOYMENT WARNING ⚠️$(NC)"
+	@echo "$(RED)════════════════════════════════════════════════════════════════$(NC)"
+	@echo "Namespace: $(PROD_NAMESPACE)"
+	@echo "Backend Image: $(PROD_BACKEND_IMAGE)"
+	@echo "Frontend Image: $(PROD_FRONTEND_IMAGE)"
+	@echo ""
+	@echo "$(YELLOW)Type 'yes' to continue with PRODUCTION deployment:$(NC)"
+	@read confirm && [ "$$confirm" = "yes" ] || (echo "$(RED)Deployment cancelled$(NC)" && exit 1)
+	@echo "$(PURPLE)Deploying to PRODUCTION...$(NC)"
+	@# Create namespace if it doesn't exist
+	$(KUBECTL) create namespace $(PROD_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	@# Apply deployments
+	$(KUBECTL) apply -f k8s/backend-deployment.yaml -n $(PROD_NAMESPACE)
+	$(KUBECTL) apply -f k8s/frontend-deployment.yaml -n $(PROD_NAMESPACE)
+	@# Update images with specific version
+	$(KUBECTL) set image deployment/ai-dashboard-backend \
+		backend=$(PROD_BACKEND_IMAGE) -n $(PROD_NAMESPACE)
+	$(KUBECTL) set image deployment/ai-dashboard-frontend \
+		frontend=$(PROD_FRONTEND_IMAGE) -n $(PROD_NAMESPACE)
+	@echo "$(PURPLE)✓ Deployed to production with version $(GIT_VERSION)$(NC)"
+
+.PHONY: prod-all
+prod-all: ## Complete PRODUCTION workflow: build, push, deploy
+	@echo "$(PURPLE)╔═══════════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(PURPLE)║              PRODUCTION DEPLOYMENT WORKFLOW                    ║$(NC)"
+	@echo "$(PURPLE)╚═══════════════════════════════════════════════════════════════╝$(NC)"
+	@$(MAKE) prod-build
+	@$(MAKE) prod-push
+	@$(MAKE) prod-deploy
+	@echo "$(PURPLE)✓ Production deployment complete!$(NC)"
+
+#=============================================================================
+# LOCAL DEVELOPMENT COMMANDS
+#=============================================================================
+.PHONY: install
+install: ## Install all npm dependencies
+	@echo "$(BLUE)Installing npm dependencies...$(NC)"
+	cd backend && $(NPM) ci
+	cd frontend && $(NPM) ci
+	@echo "$(GREEN)✓ Dependencies installed$(NC)"
+
+.PHONY: run-local
+run-local: ## Run application locally
+	@echo "$(BLUE)Starting local development servers...$(NC)"
+	@echo "Backend: http://localhost:3001"
+	@echo "Frontend: http://localhost:3000"
+	cd backend && $(NPM) run dev &
+	cd frontend && $(NPM) start
+
+.PHONY: test
+test: ## Run all tests
+	@echo "$(BLUE)Running tests...$(NC)"
+	cd backend && $(NPM) test
+	cd frontend && $(NPM) test -- --watchAll=false
+
+#=============================================================================
+# UTILITY COMMANDS
+#=============================================================================
+.PHONY: clean
+clean: ## Clean build artifacts
+	@echo "$(YELLOW)Cleaning build artifacts...$(NC)"
+	rm -rf backend/dist backend/node_modules
+	rm -rf frontend/build frontend/node_modules
+	@echo "$(GREEN)✓ Clean complete$(NC)"
+
+.PHONY: status
+status: ## Show deployment status
+	@echo "$(BLUE)════════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(BLUE)Development Status ($(DEV_NAMESPACE)):$(NC)"
+	@echo "$(BLUE)════════════════════════════════════════════════════════════════$(NC)"
+	-$(KUBECTL) get deployments -n $(DEV_NAMESPACE) | grep dashboard || echo "No dev deployments found"
+	@echo ""
+	@echo "$(PURPLE)════════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(PURPLE)Production Status ($(PROD_NAMESPACE)):$(NC)"
+	@echo "$(PURPLE)════════════════════════════════════════════════════════════════$(NC)"
+	-$(KUBECTL) get deployments -n $(PROD_NAMESPACE) | grep dashboard || echo "No prod deployments found"
+
+.PHONY: logs-dev
+logs-dev: ## Show development logs (COMPONENT=backend|frontend)
+	$(KUBECTL) logs -f deployment/ai-dashboard-$(COMPONENT) -n $(DEV_NAMESPACE)
+
+.PHONY: logs-prod
+logs-prod: ## Show production logs (COMPONENT=backend|frontend)
+	$(KUBECTL) logs -f deployment/ai-dashboard-$(COMPONENT) -n $(PROD_NAMESPACE)
+
+#=============================================================================
+# VERSION MANAGEMENT
+#=============================================================================
+.PHONY: version
+version: ## Show current version information
+	@echo "$(BLUE)Version Information:$(NC)"
+	@echo "  Git Version: $(GIT_VERSION)"
+	@echo "  Git Branch: $(GIT_BRANCH)"
+	@echo "  Git Commit: $(GIT_COMMIT)"
+	@echo "  Build Date: $(BUILD_DATE)"
+
+.PHONY: tag-release
+tag-release: ## Create a new release tag (VERSION=v1.0.0)
+	@if [ -z "$(VERSION)" ]; then \
+		echo "$(RED)Error: VERSION not specified$(NC)"; \
+		echo "Usage: make tag-release VERSION=v1.0.0"; \
+		exit 1; \
+	fi
+	git tag $(VERSION)
+	git push origin $(VERSION)
+	@echo "$(GREEN)✓ Tagged release: $(VERSION)$(NC)"
+
+# Default target
+.DEFAULT_GOAL := help

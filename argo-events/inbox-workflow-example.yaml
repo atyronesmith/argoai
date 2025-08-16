@@ -1,0 +1,163 @@
+# Example workflow showing the inbox pattern
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: inbox-document-processor
+  namespace: argo-ai-demo
+spec:
+  entrypoint: process-from-inbox
+  templates:
+  - name: process-from-inbox
+    inputs:
+      parameters:
+      - name: file_path      # e.g., "inbox/scan-001.pdf"
+      - name: bucket_name    # e.g., "documents"
+    dag:
+      tasks:
+      # 1. Analyze document to determine type
+      - name: analyze
+        template: analyze-document
+        arguments:
+          parameters:
+          - name: file_path
+            value: "{{inputs.parameters.file_path}}"
+
+      # 2. Move to appropriate folder
+      - name: organize
+        template: move-to-folder
+        dependencies: [analyze]
+        arguments:
+          parameters:
+          - name: source_path
+            value: "{{inputs.parameters.file_path}}"
+          - name: doc_type
+            value: "{{tasks.analyze.outputs.parameters.type}}"
+          - name: priority
+            value: "{{tasks.analyze.outputs.parameters.priority}}"
+
+      # 3. Process in final location
+      - name: process
+        template: process-document
+        dependencies: [organize]
+        arguments:
+          parameters:
+          - name: file_path
+            value: "{{tasks.organize.outputs.parameters.new_path}}"
+          - name: doc_type
+            value: "{{tasks.analyze.outputs.parameters.type}}"
+
+  - name: analyze-document
+    inputs:
+      parameters:
+      - name: file_path
+    outputs:
+      parameters:
+      - name: type
+        valueFrom:
+          path: /tmp/analysis.json
+          jqFilter: .type
+      - name: priority
+        valueFrom:
+          path: /tmp/analysis.json
+          jqFilter: .priority
+    container:
+      image: alpine:latest
+      command: [sh, -c]
+      args:
+      - |
+        # Simulate AI analysis
+        echo "Analyzing document: {{inputs.parameters.file_path}}"
+
+        # In real implementation, this would:
+        # 1. Download the file
+        # 2. Extract text
+        # 3. Call Ollama for classification
+
+        # For demo, detect based on filename patterns
+        if echo "{{inputs.parameters.file_path}}" | grep -i "invoice"; then
+          echo '{"type":"invoice","priority":"normal"}' > /tmp/analysis.json
+        elif echo "{{inputs.parameters.file_path}}" | grep -i "contract"; then
+          echo '{"type":"contract","priority":"normal"}' > /tmp/analysis.json
+        elif echo "{{inputs.parameters.file_path}}" | grep -i "urgent"; then
+          echo '{"type":"correspondence","priority":"urgent"}' > /tmp/analysis.json
+        else
+          echo '{"type":"correspondence","priority":"normal"}' > /tmp/analysis.json
+        fi
+
+        cat /tmp/analysis.json
+
+  - name: move-to-folder
+    inputs:
+      parameters:
+      - name: source_path
+      - name: doc_type
+      - name: priority
+    outputs:
+      parameters:
+      - name: new_path
+        valueFrom:
+          path: /tmp/new_path.txt
+    container:
+      image: minio/mc:latest
+      command: [sh, -c]
+      args:
+      - |
+        # Setup MinIO client
+        mc alias set myminio http://minio:9000 $MINIO_ACCESS_KEY $MINIO_SECRET_KEY
+
+        # Determine target folder
+        case "{{inputs.parameters.doc_type}}" in
+          invoice)
+            FOLDER="invoices/{{inputs.parameters.priority}}"
+            ;;
+          contract)
+            FOLDER="contracts/{{inputs.parameters.priority}}"
+            ;;
+          techdoc)
+            FOLDER="technical/{{inputs.parameters.priority}}"
+            ;;
+          *)
+            FOLDER="correspondence/{{inputs.parameters.priority}}"
+            ;;
+        esac
+
+        # Create filename with timestamp
+        FILENAME=$(basename "{{inputs.parameters.source_path}}")
+        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+        NEW_PATH="${FOLDER}/${TIMESTAMP}_${FILENAME}"
+
+        # Move the file
+        echo "Moving to: $NEW_PATH"
+        mc mv "myminio/documents/{{inputs.parameters.source_path}}" "myminio/documents/$NEW_PATH"
+
+        echo "$NEW_PATH" > /tmp/new_path.txt
+      env:
+      - name: MINIO_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: minio-credentials
+            key: root-user
+      - name: MINIO_SECRET_KEY
+        valueFrom:
+          secretKeyRef:
+            name: minio-credentials
+            key: root-password
+
+  - name: process-document
+    inputs:
+      parameters:
+      - name: file_path
+      - name: doc_type
+    container:
+      image: alpine:latest
+      command: [sh, -c]
+      args:
+      - |
+        echo "Processing document:"
+        echo "  Path: {{inputs.parameters.file_path}}"
+        echo "  Type: {{inputs.parameters.doc_type}}"
+        echo ""
+        echo "Document has been:"
+        echo "✓ Classified by AI"
+        echo "✓ Moved to appropriate folder"
+        echo "✓ Ready for type-specific processing"

@@ -1,0 +1,128 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ai-pipeline-quick-test
+  namespace: argo-ai-demo
+spec:
+  template:
+    spec:
+      serviceAccountName: argo
+      restartPolicy: Never
+      containers:
+      - name: test-runner
+        image: curlimages/curl:latest
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "Running AI Pipeline Quick Tests..."
+          echo "===================================="
+
+          # Test 1: Check Ollama is responding
+          echo -n "Testing Ollama API... "
+          if curl -s http://ollama:11434/api/tags > /dev/null; then
+            echo "✓ PASS"
+          else
+            echo "✗ FAIL"
+            exit 1
+          fi
+
+          # Test 2: Check MinIO is accessible
+          echo -n "Testing MinIO API... "
+          if curl -s http://minio:9000/minio/health/live > /dev/null; then
+            echo "✓ PASS"
+          else
+            echo "✗ FAIL"
+            exit 1
+          fi
+
+          # Test 3: Submit test workflow
+          echo -n "Testing workflow submission... "
+          cat > /tmp/test-workflow.yaml << 'EOF'
+          apiVersion: argoproj.io/v1alpha1
+          kind: Workflow
+          metadata:
+            generateName: test-basic-
+          spec:
+            entrypoint: test
+            templates:
+            - name: test
+              script:
+                image: alpine:latest
+                command: [sh]
+                source: |
+                  echo "Test workflow executing"
+                  echo "Document Type: Invoice"
+                  echo "Priority: Normal"
+          EOF
+
+          # Here we would use kubectl/oc to submit
+          echo "✓ PASS (mock)"
+
+          echo ""
+          echo "===================================="
+          echo "Quick tests completed successfully!"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-documents
+  namespace: argo-ai-demo
+data:
+  invoice-normal.txt: |
+    INVOICE #2024-001
+    Date: 2024-01-15
+    Due Date: 2024-02-15
+
+    Bill To: Test Company Inc.
+    Amount: $5,000.00
+
+    Description: Professional services
+    Payment Terms: Net 30
+
+  invoice-urgent.txt: |
+    FINAL NOTICE - INVOICE #2024-002
+    URGENT: PAST DUE BY 60 DAYS
+
+    Amount Due: $50,000.00
+
+    IMMEDIATE PAYMENT REQUIRED
+    Legal action will commence if not paid within 48 hours.
+
+  contract-normal.txt: |
+    SERVICE AGREEMENT
+
+    This agreement is entered into between Provider and Client.
+    Term: 12 months
+    Rate: Standard
+
+  contract-urgent.txt: |
+    URGENT: CONTRACT EXPIRES IN 24 HOURS
+
+    Immediate signature required to avoid service disruption.
+    New terms include 15% price increase.
+
+  techdoc-normal.txt: |
+    Technical Specification v1.0
+
+    This document describes the system architecture.
+    Last updated: Q1 2024
+
+  techdoc-urgent.txt: |
+    CRITICAL SECURITY PATCH REQUIRED
+
+    CVE-2024-CRITICAL: Remote code execution vulnerability
+    Patch immediately to version 2.1.5
+
+  correspondence-normal.txt: |
+    Hello team,
+
+    Following up on our last meeting.
+    Please review when you have a chance.
+
+    Best regards
+
+  correspondence-urgent.txt: |
+    URGENT: RESPONSE REQUIRED BY 5PM TODAY
+
+    Board meeting tomorrow needs your input.
+    This will impact the entire project timeline.

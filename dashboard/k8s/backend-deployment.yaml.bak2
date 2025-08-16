@@ -1,0 +1,283 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-dashboard-backend
+  namespace: argo-ai-demo
+  labels:
+    app: ai-dashboard-backend
+    component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-dashboard-backend
+  template:
+    metadata:
+      labels:
+        app: ai-dashboard-backend
+        component: backend
+    spec:
+      serviceAccountName: ai-dashboard
+      containers:
+      - name: backend
+        image: registry.access.redhat.com/ubi8/nodejs-16:latest
+        workingDir: /opt/app-root/src
+        command: ['bash', '-c']
+        args:
+        - |
+          set -e
+          echo "Starting AI Dashboard Backend..."
+          
+          # Create package.json
+          cat > package.json << 'EOF'
+          {
+            "name": "ai-workflow-backend",
+            "version": "1.0.0",
+            "main": "server.js",
+            "dependencies": {
+              "express": "^4.18.2",
+              "cors": "^2.8.5",
+              "sqlite3": "^5.1.6",
+              "ws": "^8.14.2",
+              "axios": "^1.6.0"
+            }
+          }
+          EOF
+          
+          echo "Installing dependencies..."
+          npm install --production
+          
+          # Create basic server
+          cat > server.js << 'EOF'
+          const express = require('express');
+          const cors = require('cors');
+          const { createServer } = require('http');
+          const WebSocket = require('ws');
+          const fs = require('fs');
+          const path = require('path');
+          
+          const app = express();
+          const port = process.env.PORT || 3001;
+          const server = createServer(app);
+          
+          app.use(cors());
+          app.use(express.json());
+          
+          // Ensure data directory exists
+          const dataDir = process.env.DATABASE_PATH ? path.dirname(process.env.DATABASE_PATH) : '/opt/app-root/src/data';
+          if (!fs.existsSync(dataDir)) {
+            fs.mkdirSync(dataDir, { recursive: true });
+          }
+          
+          // Health check endpoint
+          app.get('/api/health', (req, res) => {
+            res.json({ 
+              status: 'healthy', 
+              timestamp: new Date().toISOString(),
+              version: '1.0.0'
+            });
+          });
+          
+          // Mock workflows endpoint
+          app.get('/api/workflows', (req, res) => {
+            console.log('GET /api/workflows called');
+            res.json([
+              {
+                id: 'sample-workflow-1',
+                name: 'sample-doc-process-1',
+                status: 'Succeeded',
+                docUrl: 'https://example.com/sample.pdf',
+                docType: 'Invoice',
+                priority: 'Normal',
+                confidence: 0.95,
+                createdAt: new Date(Date.now() - 3600000).toISOString(),
+                updatedAt: new Date().toISOString(),
+                completedAt: new Date().toISOString()
+              }
+            ]);
+          });
+          
+          // Mock single workflow endpoint
+          app.get('/api/workflows/:id', (req, res) => {
+            console.log(`GET /api/workflows/${req.params.id} called`);
+            res.json({
+              id: req.params.id,
+              name: `workflow-${req.params.id}`,
+              status: 'Succeeded',
+              docUrl: 'https://example.com/sample.pdf',
+              docType: 'Invoice',
+              priority: 'Normal',
+              confidence: 0.95,
+              createdAt: new Date(Date.now() - 3600000).toISOString(),
+              updatedAt: new Date().toISOString(),
+              completedAt: new Date().toISOString(),
+              steps: [
+                { id: 1, stepName: 'init-model', status: 'Succeeded', startedAt: new Date(Date.now() - 3600000).toISOString(), completedAt: new Date(Date.now() - 3500000).toISOString() },
+                { id: 2, stepName: 'ingest-document', status: 'Succeeded', startedAt: new Date(Date.now() - 3500000).toISOString(), completedAt: new Date(Date.now() - 3000000).toISOString() },
+                { id: 3, stepName: 'classify-document', status: 'Succeeded', startedAt: new Date(Date.now() - 3000000).toISOString(), completedAt: new Date(Date.now() - 2500000).toISOString() },
+                { id: 4, stepName: 'extract-info', status: 'Succeeded', startedAt: new Date(Date.now() - 2500000).toISOString(), completedAt: new Date(Date.now() - 2000000).toISOString() },
+                { id: 5, stepName: 'process-by-type', status: 'Succeeded', startedAt: new Date(Date.now() - 2000000).toISOString(), completedAt: new Date(Date.now() - 1500000).toISOString() },
+                { id: 6, stepName: 'generate-report', status: 'Succeeded', startedAt: new Date(Date.now() - 1500000).toISOString(), completedAt: new Date(Date.now() - 1000000).toISOString() }
+              ]
+            });
+          });
+          
+          // Mock workflow logs
+          app.get('/api/workflows/:id/logs', (req, res) => {
+            console.log(`GET /api/workflows/${req.params.id}/logs called`);
+            res.json({ logs: `Sample logs for workflow ${req.params.id} step ${req.query.step || 'all'}` });
+          });
+          
+          // Submit workflow
+          app.post('/api/workflows', (req, res) => {
+            console.log('POST /api/workflows called', req.body);
+            const newWorkflow = {
+              id: `workflow-${Date.now()}`,
+              name: `doc-process-${Date.now()}`,
+              status: 'Running',
+              docUrl: req.body.docUrl,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+            res.json(newWorkflow);
+          });
+          
+          // Mock metrics endpoint  
+          app.get('/api/metrics', (req, res) => {
+            console.log('GET /api/metrics called');
+            res.json({
+              totalWorkflows: 5,
+              activeWorkflows: 1,
+              completedWorkflows: 4,
+              failedWorkflows: 0,
+              avgProcessingTime: 15.5,
+              documentsProcessed: 4
+            });
+          });
+          
+          // Mock documents endpoint
+          app.get('/api/metrics/documents', (req, res) => {
+            console.log('GET /api/metrics/documents called');
+            res.json([
+              {
+                id: 'doc-1',
+                name: 'sample-invoice.pdf',
+                type: 'Invoice',
+                priority: 'Normal',
+                confidence: 95,
+                status: 'Succeeded',
+                processedAt: new Date().toISOString(),
+                downloadUrl: '/api/workflows/doc-1/artifacts'
+              }
+            ]);
+          });
+          
+          // WebSocket server
+          const wss = new WebSocket.Server({ server });
+          
+          wss.on('connection', (ws) => {
+            console.log('WebSocket connection established');
+            
+            ws.on('message', (message) => {
+              try {
+                const data = JSON.parse(message);
+                console.log('WebSocket message received:', data);
+                if (data.type === 'subscribe') {
+                  ws.send(JSON.stringify({ type: 'subscribed', message: 'Successfully subscribed' }));
+                }
+              } catch (error) {
+                console.error('WebSocket message error:', error);
+              }
+            });
+            
+            ws.on('close', () => {
+              console.log('WebSocket connection closed');
+            });
+          });
+          
+          server.listen(port, '0.0.0.0', () => {
+            console.log(`AI Dashboard Backend running on port ${port}`);
+            console.log(`Health check: http://localhost:${port}/api/health`);
+          });
+          EOF
+          
+          echo "Starting server..."
+          node server.js
+        ports:
+        - containerPort: 3001
+          name: http
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3001"
+        - name: DATABASE_PATH
+          value: "/data/workflows.db"
+        - name: ARGO_SERVER
+          value: "argo-server.argo-ai-demo.svc.cluster.local:2746"
+        - name: ARGO_NAMESPACE
+          value: "argo-ai-demo"
+        - name: MINIO_ENDPOINT
+          value: "minio.argo-ai-demo.svc.cluster.local:9000"
+        - name: FRONTEND_URL
+          value: "https://ai-dashboard-frontend.argo-ai-demo.svc.cluster.local"
+        volumeMounts:
+        - name: sqlite-storage
+          mountPath: /data
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3001
+          initialDelaySeconds: 90
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3001
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      volumes:
+      - name: sqlite-storage
+        persistentVolumeClaim:
+          claimName: dashboard-sqlite-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-dashboard-backend
+  namespace: argo-ai-demo
+  labels:
+    app: ai-dashboard-backend
+spec:
+  selector:
+    app: ai-dashboard-backend
+  ports:
+  - name: http
+    port: 3001
+    targetPort: 3001
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dashboard-sqlite-pvc
+  namespace: argo-ai-demo
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,44 @@
+{{- if .Values.argo.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: argo-server
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: argo-server
+spec:
+  type: ClusterIP
+  ports:
+  - name: web
+    port: 2746
+    protocol: TCP
+    targetPort: 2746
+  selector:
+    {{- include "ai-document-pipeline.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: argo-server
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workflow-controller-metrics
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: argo-controller
+spec:
+  type: ClusterIP
+  ports:
+  - name: metrics
+    port: 9090
+    protocol: TCP
+    targetPort: 9090
+  - name: telemetry
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    {{- include "ai-document-pipeline.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: argo-controller
+{{- end }}

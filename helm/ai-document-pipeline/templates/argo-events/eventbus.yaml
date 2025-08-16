@@ -1,0 +1,19 @@
+{{- if .Values.argoEvents.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: EventBus
+metadata:
+  name: default
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: eventbus
+spec:
+  nats:
+    native:
+      replicas: {{ .Values.argoEvents.eventBus.replicas }}
+      auth: token
+      {{- with .Values.argoEvents.eventBus.resources }}
+      resources:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,39 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ai-dashboard
+  namespace: argo-ai-demo
+  labels:
+    app: ai-workflow-dashboard
+spec:
+  to:
+    kind: Service
+    name: ai-dashboard-frontend
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ai-dashboard-api
+  namespace: argo-ai-demo
+  labels:
+    app: ai-workflow-dashboard
+spec:
+  to:
+    kind: Service
+    name: ai-dashboard-backend
+    weight: 100
+  port:
+    targetPort: http
+  path: /api
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None

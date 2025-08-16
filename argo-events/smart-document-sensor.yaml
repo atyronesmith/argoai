@@ -1,0 +1,245 @@
+# Smart Document Processing Sensor
+# Detects document type based on file path and triggers appropriate processing
+
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: document-drops
+  namespace: argo-ai-demo
+spec:
+  minio:
+    # Watch invoice uploads
+    invoices:
+      endpoint: minio.argo-ai-demo.svc.cluster.local:9000
+      bucket:
+        name: documents
+      events:
+        - s3:ObjectCreated:*
+      filter:
+        prefix: "invoices/"
+      insecure: true
+      accessKey:
+        name: minio-credentials
+        key: root-user
+      secretKey:
+        name: minio-credentials
+        key: root-password
+
+    # Watch contract uploads
+    contracts:
+      endpoint: minio.argo-ai-demo.svc.cluster.local:9000
+      bucket:
+        name: documents
+      events:
+        - s3:ObjectCreated:*
+      filter:
+        prefix: "contracts/"
+      insecure: true
+      accessKey:
+        name: minio-credentials
+        key: root-user
+      secretKey:
+        name: minio-credentials
+        key: root-password
+
+    # Watch technical documentation
+    techdocs:
+      endpoint: minio.argo-ai-demo.svc.cluster.local:9000
+      bucket:
+        name: documents
+      events:
+        - s3:ObjectCreated:*
+      filter:
+        prefix: "technical/"
+      insecure: true
+      accessKey:
+        name: minio-credentials
+        key: root-user
+      secretKey:
+        name: minio-credentials
+        key: root-password
+
+    # Watch general correspondence
+    correspondence:
+      endpoint: minio.argo-ai-demo.svc.cluster.local:9000
+      bucket:
+        name: documents
+      events:
+        - s3:ObjectCreated:*
+      filter:
+        prefix: "correspondence/"
+      insecure: true
+      accessKey:
+        name: minio-credentials
+        key: root-user
+      secretKey:
+        name: minio-credentials
+        key: root-password
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: smart-document-processor
+  namespace: argo-ai-demo
+spec:
+  template:
+    serviceAccountName: argo-events-sa
+  dependencies:
+    - name: invoice-dep
+      eventSourceName: document-drops
+      eventName: invoices
+    - name: contract-dep
+      eventSourceName: document-drops
+      eventName: contracts
+    - name: techdoc-dep
+      eventSourceName: document-drops
+      eventName: techdocs
+    - name: correspondence-dep
+      eventSourceName: document-drops
+      eventName: correspondence
+
+  triggers:
+    # Invoice processing trigger
+    - template:
+        name: process-invoice
+        conditions: invoice-dep
+        k8s:
+          operation: create
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: invoice-
+                namespace: argo-ai-demo
+                labels:
+                  document-type: invoice
+                  source: minio-sensor
+              spec:
+                serviceAccountName: argo
+                workflowTemplateRef:
+                  name: ai-document-processor
+                arguments:
+                  parameters:
+                  - name: document_url
+                    value: ""  # Will be filled by event
+                  - name: model
+                    value: "llama3.2:3b"
+                  - name: document_type_hint
+                    value: "invoice"
+                  - name: priority_check
+                    value: "true"  # Check for urgent payment terms
+          parameters:
+            - src:
+                dependencyName: invoice-dep
+                dataTemplate: "http://minio.argo-ai-demo.svc.cluster.local:9000/{{ .Input.notification.0.s3.bucket.name }}/{{ .Input.notification.0.s3.object.key }}"
+              dest: spec.arguments.parameters.0.value
+
+    # Contract processing trigger
+    - template:
+        name: process-contract
+        conditions: contract-dep
+        k8s:
+          operation: create
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: contract-
+                namespace: argo-ai-demo
+                labels:
+                  document-type: contract
+                  source: minio-sensor
+              spec:
+                serviceAccountName: argo
+                workflowTemplateRef:
+                  name: ai-document-processor
+                arguments:
+                  parameters:
+                  - name: document_url
+                    value: ""
+                  - name: model
+                    value: "llama3.2:3b"
+                  - name: document_type_hint
+                    value: "contract"
+                  - name: priority_check
+                    value: "true"  # Check for expiration dates
+          parameters:
+            - src:
+                dependencyName: contract-dep
+                dataTemplate: "http://minio.argo-ai-demo.svc.cluster.local:9000/{{ .Input.notification.0.s3.bucket.name }}/{{ .Input.notification.0.s3.object.key }}"
+              dest: spec.arguments.parameters.0.value
+
+    # Technical documentation trigger
+    - template:
+        name: process-techdoc
+        conditions: techdoc-dep
+        k8s:
+          operation: create
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: techdoc-
+                namespace: argo-ai-demo
+                labels:
+                  document-type: technical
+                  source: minio-sensor
+              spec:
+                serviceAccountName: argo
+                workflowTemplateRef:
+                  name: ai-document-processor
+                arguments:
+                  parameters:
+                  - name: document_url
+                    value: ""
+                  - name: model
+                    value: "llama3.2:3b"
+                  - name: document_type_hint
+                    value: "technical"
+                  - name: priority_check
+                    value: "true"  # Check for security updates
+          parameters:
+            - src:
+                dependencyName: techdoc-dep
+                dataTemplate: "http://minio.argo-ai-demo.svc.cluster.local:9000/{{ .Input.notification.0.s3.bucket.name }}/{{ .Input.notification.0.s3.object.key }}"
+              dest: spec.arguments.parameters.0.value
+
+    # Correspondence trigger
+    - template:
+        name: process-correspondence
+        conditions: correspondence-dep
+        k8s:
+          operation: create
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: correspondence-
+                namespace: argo-ai-demo
+                labels:
+                  document-type: correspondence
+                  source: minio-sensor
+              spec:
+                serviceAccountName: argo
+                workflowTemplateRef:
+                  name: ai-document-processor
+                arguments:
+                  parameters:
+                  - name: document_url
+                    value: ""
+                  - name: model
+                    value: "llama3.2:3b"
+                  - name: document_type_hint
+                    value: "correspondence"
+                  - name: priority_check
+                    value: "true"  # Check for urgent keywords
+          parameters:
+            - src:
+                dependencyName: correspondence-dep
+                dataTemplate: "http://minio.argo-ai-demo.svc.cluster.local:9000/{{ .Input.notification.0.s3.bucket.name }}/{{ .Input.notification.0.s3.object.key }}"
+              dest: spec.arguments.parameters.0.value

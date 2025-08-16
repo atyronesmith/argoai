@@ -1,0 +1,89 @@
+# Production environment values
+
+# Production domain
+global:
+  domain: apps.prod.example.com
+  # Use a specific storage class
+  storageClass: "fast-ssd"
+
+# MinIO with production settings
+minio:
+  auth:
+    # These should be overridden via secrets in production
+    existingSecret: "minio-credentials"
+  persistence:
+    size: 100Gi
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  # Enable metrics
+  metrics:
+    enabled: true
+
+# Ollama with production resources
+ollama:
+  persistence:
+    size: 100Gi
+  resources:
+    requests:
+      cpu: 4000m
+      memory: 8Gi
+    limits:
+      cpu: 8000m
+      memory: 16Gi
+  # Load all models
+  models:
+    - "llama3.2:3b"
+    - "mistral:7b"
+    - "phi3:mini"
+    - "gemma2:2b"
+    - "llama2:13b"
+
+# Argo with HA configuration
+argo:
+  server:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+  controller:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+  # Enable metrics
+  metrics:
+    enabled: true
+
+# Production security settings
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+# Node affinity for GPU nodes (for Ollama)
+ollama:
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: accelerator
+            operator: In
+            values:
+            - nvidia-gpu

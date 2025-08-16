@@ -1,0 +1,11 @@
+{{- if and .Values.global.namespace .Values.global.createNamespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.namespace }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+  annotations:
+    openshift.io/description: "AI-Enhanced Document Processing Pipeline"
+    openshift.io/display-name: "AI Document Processing"
+{{- end }}

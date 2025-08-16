@@ -1,0 +1,107 @@
+# Environment-specific Makefile commands
+
+# Environment detection
+ENV ?= dev
+NAMESPACE_SUFFIX := $(ENV)
+NAMESPACE := argo-ai-$(NAMESPACE_SUFFIX)
+
+# Validation
+VALID_ENVS := dev staging prod
+ifeq ($(filter $(ENV),$(VALID_ENVS)),)
+    $(error Invalid ENV: $(ENV). Valid values are: $(VALID_ENVS))
+endif
+
+# Image tagging based on environment
+ifeq ($(ENV),dev)
+    IMAGE_TAG := latest
+    PULL_POLICY := Always
+else ifeq ($(ENV),staging)
+    IMAGE_TAG := staging-$(GIT_VERSION)
+    PULL_POLICY := Always
+else ifeq ($(ENV),prod)
+    IMAGE_TAG := $(GIT_VERSION)
+    PULL_POLICY := IfNotPresent
+endif
+
+##@ Environment-Specific Commands
+
+.PHONY: deploy
+deploy: ## Deploy to specific environment (ENV=dev|staging|prod)
+	@echo "$(BLUE)Deploying to $(ENV) environment$(RESET)"
+	@echo "Namespace: $(NAMESPACE)"
+	@echo "Image Tag: $(IMAGE_TAG)"
+	kubectl apply -k k8s/overlays/$(ENV)
+
+.PHONY: build-for-env
+build-for-env: ## Build images for specific environment
+	@echo "$(BLUE)Building for $(ENV) environment$(RESET)"
+	$(PODMAN) build \
+		--build-arg VERSION=$(IMAGE_TAG) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg ENVIRONMENT=$(ENV) \
+		-t $(REGISTRY)/$(PROJECT_NAME)-backend:$(IMAGE_TAG) \
+		-f backend/Dockerfile backend
+	$(PODMAN) build \
+		--build-arg VERSION=$(IMAGE_TAG) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg ENVIRONMENT=$(ENV) \
+		-t $(REGISTRY)/$(PROJECT_NAME)-frontend:$(IMAGE_TAG) \
+		-f frontend/Dockerfile frontend
+
+.PHONY: push-for-env
+push-for-env: ## Push images for specific environment
+	@echo "$(BLUE)Pushing images for $(ENV) environment$(RESET)"
+	$(PODMAN) push $(REGISTRY)/$(PROJECT_NAME)-backend:$(IMAGE_TAG)
+	$(PODMAN) push $(REGISTRY)/$(PROJECT_NAME)-frontend:$(IMAGE_TAG)
+
+.PHONY: dev
+dev: ENV=dev
+dev: build-for-env push-for-env deploy ## Full dev deployment
+
+.PHONY: staging
+staging: ENV=staging
+staging: build-for-env push-for-env deploy ## Full staging deployment
+
+.PHONY: prod
+prod: ENV=prod
+prod: ## Full production deployment (with confirmation)
+	@echo "$(RED)WARNING: Deploying to PRODUCTION$(RESET)"
+	@echo "Version: $(GIT_VERSION)"
+	@echo "Type 'yes' to continue:"
+	@read confirm && [ "$$confirm" = "yes" ] || (echo "Aborted" && exit 1)
+	@$(MAKE) build-for-env push-for-env deploy
+
+.PHONY: rollback
+rollback: ## Rollback deployment in environment (ENV=dev|staging|prod)
+	@echo "$(YELLOW)Rolling back $(ENV) deployment$(RESET)"
+	kubectl rollout undo deployment/ai-dashboard-backend -n $(NAMESPACE)
+	kubectl rollout undo deployment/ai-dashboard-frontend -n $(NAMESPACE)
+
+.PHONY: status
+status: ## Check deployment status for environment
+	@echo "$(BLUE)Status for $(ENV) environment$(RESET)"
+	kubectl get all -n $(NAMESPACE) -l app=ai-dashboard
+
+.PHONY: logs
+logs: ## View logs for environment (COMPONENT=backend|frontend)
+	kubectl logs -f deployment/ai-dashboard-$(COMPONENT) -n $(NAMESPACE)
+
+##@ Environment Setup
+
+.PHONY: create-namespace
+create-namespace: ## Create namespace for environment
+	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	kubectl label namespace $(NAMESPACE) environment=$(ENV)
+
+.PHONY: setup-env
+setup-env: create-namespace ## Setup complete environment
+	@echo "$(GREEN)Setting up $(ENV) environment$(RESET)"
+	# Apply RBAC
+	kubectl apply -f k8s/rbac.yaml -n $(NAMESPACE)
+	# Create secrets
+	kubectl create secret generic minio-credentials \
+		--from-literal=root-user=minioadmin \
+		--from-literal=root-password=minioadmin \
+		-n $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -

@@ -1,0 +1,30 @@
+{{- if and .Values.argoEvents.enabled .Values.argoEvents.inbox.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: document-inbox
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: eventsource
+spec:
+  minio:
+    inbox:
+      endpoint: {{ .Values.minio.service.name }}.{{ include "ai-document-pipeline.namespace" . }}.svc.cluster.local:{{ .Values.minio.service.port }}
+      bucket:
+        name: {{ .Values.argoEvents.inbox.bucket }}
+      events:
+        - s3:ObjectCreated:Put
+        - s3:ObjectCreated:Post
+        - s3:ObjectCreated:CompleteMultipartUpload
+      filter:
+        prefix: {{ .Values.argoEvents.inbox.prefix | quote }}
+        suffix: {{ .Values.argoEvents.inbox.suffix | quote }}
+      insecure: true
+      accessKey:
+        name: {{ .Values.minio.auth.existingSecret }}
+        key: root-user
+      secretKey:
+        name: {{ .Values.minio.auth.existingSecret }}
+        key: root-password
+{{- end }}

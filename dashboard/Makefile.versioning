@@ -1,0 +1,119 @@
+# Enhanced Makefile snippet for versioning strategy
+
+# Versioning configuration
+GIT_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "unknown")
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
+GIT_COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
+
+# Determine environment tag based on branch
+ifeq ($(GIT_BRANCH),main)
+    ENV_TAG := stable
+else ifeq ($(GIT_BRANCH),develop)
+    ENV_TAG := dev
+else
+    ENV_TAG := $(GIT_BRANCH)
+endif
+
+# Allow override via environment variable
+ifdef IMAGE_TAG
+    ENV_TAG := $(IMAGE_TAG)
+endif
+
+# Image names with multiple tags
+BACKEND_IMAGE_GIT := $(REGISTRY)/$(PROJECT_NAME)-backend:$(GIT_VERSION)
+BACKEND_IMAGE_ENV := $(REGISTRY)/$(PROJECT_NAME)-backend:$(ENV_TAG)
+BACKEND_IMAGE_LATEST := $(REGISTRY)/$(PROJECT_NAME)-backend:latest
+
+FRONTEND_IMAGE_GIT := $(REGISTRY)/$(PROJECT_NAME)-frontend:$(GIT_VERSION)
+FRONTEND_IMAGE_ENV := $(REGISTRY)/$(PROJECT_NAME)-frontend:$(ENV_TAG)
+FRONTEND_IMAGE_LATEST := $(REGISTRY)/$(PROJECT_NAME)-frontend:latest
+
+##@ Versioning Commands
+
+.PHONY: build-images
+build-images: ## Build images with proper tags
+	@echo "$(BLUE)Building images with git version: $(GIT_VERSION)$(RESET)"
+	@echo "$(BLUE)Environment tag: $(ENV_TAG)$(RESET)"
+	$(PODMAN) build \
+		--build-arg VERSION=$(GIT_VERSION) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		-t $(BACKEND_IMAGE_GIT) \
+		-f backend/Dockerfile backend
+	$(PODMAN) build \
+		--build-arg VERSION=$(GIT_VERSION) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		-t $(FRONTEND_IMAGE_GIT) \
+		-f frontend/Dockerfile frontend
+
+.PHONY: tag-images
+tag-images: ## Tag images for different environments
+	@echo "$(BLUE)Tagging images for environment: $(ENV_TAG)$(RESET)"
+	# Tag with environment-specific tag
+	$(PODMAN) tag $(BACKEND_IMAGE_GIT) $(BACKEND_IMAGE_ENV)
+	$(PODMAN) tag $(FRONTEND_IMAGE_GIT) $(FRONTEND_IMAGE_ENV)
+	# Optionally tag as latest (only for dev)
+ifeq ($(ENV_TAG),dev)
+	$(PODMAN) tag $(BACKEND_IMAGE_GIT) $(BACKEND_IMAGE_LATEST)
+	$(PODMAN) tag $(FRONTEND_IMAGE_GIT) $(FRONTEND_IMAGE_LATEST)
+endif
+
+.PHONY: push-all-tags
+push-all-tags: ## Push all image tags
+	@echo "$(BLUE)Pushing all image tags$(RESET)"
+	# Always push git version
+	$(PODMAN) push $(BACKEND_IMAGE_GIT)
+	$(PODMAN) push $(FRONTEND_IMAGE_GIT)
+	# Push environment tag
+	$(PODMAN) push $(BACKEND_IMAGE_ENV)
+	$(PODMAN) push $(FRONTEND_IMAGE_ENV)
+	# Push latest if tagged
+ifeq ($(ENV_TAG),dev)
+	$(PODMAN) push $(BACKEND_IMAGE_LATEST)
+	$(PODMAN) push $(FRONTEND_IMAGE_LATEST)
+endif
+
+.PHONY: push-dev
+push-dev: ## Quick push for development (latest tag only)
+	@echo "$(YELLOW)Pushing with 'latest' tag for development$(RESET)"
+	$(PODMAN) tag $(BACKEND_IMAGE_GIT) $(BACKEND_IMAGE_LATEST)
+	$(PODMAN) tag $(FRONTEND_IMAGE_GIT) $(FRONTEND_IMAGE_LATEST)
+	$(PODMAN) push $(BACKEND_IMAGE_LATEST)
+	$(PODMAN) push $(FRONTEND_IMAGE_LATEST)
+
+.PHONY: deploy-dev
+deploy-dev: ## Deploy to development using latest tag
+	@echo "$(BLUE)Deploying to development with 'latest' tag$(RESET)"
+	$(OC) set image deployment/ai-dashboard-backend \
+		backend=$(BACKEND_IMAGE_LATEST) -n $(NAMESPACE)
+	$(OC) set image deployment/ai-dashboard-frontend \
+		frontend=$(FRONTEND_IMAGE_LATEST) -n $(NAMESPACE)
+
+.PHONY: deploy-prod
+deploy-prod: ## Deploy to production using specific version
+	@echo "$(BLUE)Deploying to production with version: $(GIT_VERSION)$(RESET)"
+	@echo "$(YELLOW)Are you sure? Type 'yes' to continue:$(RESET)"
+	@read confirm && [ "$$confirm" = "yes" ] || (echo "Aborted" && exit 1)
+	$(OC) set image deployment/ai-dashboard-backend \
+		backend=$(BACKEND_IMAGE_GIT) -n $(NAMESPACE)
+	$(OC) set image deployment/ai-dashboard-frontend \
+		frontend=$(FRONTEND_IMAGE_GIT) -n $(NAMESPACE)
+
+.PHONY: show-versions
+show-versions: ## Show current image versions
+	@echo "$(BLUE)Current Image Versions:$(RESET)"
+	@echo "Git Version: $(GIT_VERSION)"
+	@echo "Git Branch: $(GIT_BRANCH)"
+	@echo "Environment Tag: $(ENV_TAG)"
+	@echo ""
+	@echo "Backend Images:"
+	@echo "  - $(BACKEND_IMAGE_GIT)"
+	@echo "  - $(BACKEND_IMAGE_ENV)"
+	@echo "  - $(BACKEND_IMAGE_LATEST) (dev only)"
+	@echo ""
+	@echo "Frontend Images:"
+	@echo "  - $(FRONTEND_IMAGE_GIT)"
+	@echo "  - $(FRONTEND_IMAGE_ENV)"
+	@echo "  - $(FRONTEND_IMAGE_LATEST) (dev only)"

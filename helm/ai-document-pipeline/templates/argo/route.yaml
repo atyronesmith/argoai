@@ -1,0 +1,23 @@
+{{- if and .Values.argo.enabled .Values.argo.route.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: argo-server
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: argo-server
+spec:
+  host: argo-server-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+  port:
+    targetPort: web
+  to:
+    kind: Service
+    name: argo-server
+    weight: 100
+  {{- if .Values.argo.route.tls }}
+  tls:
+    termination: {{ .Values.argo.route.tls.termination }}
+    insecureEdgeTerminationPolicy: {{ .Values.argo.route.tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+{{- end }}

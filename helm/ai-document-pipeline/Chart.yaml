@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MIT
+apiVersion: v2
+name: ai-document-pipeline
+description: AI-Enhanced Document Processing Pipeline with Argo Workflows, Ollama, and MinIO
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+home: https://github.com/yourusername/ai-document-pipeline
+keywords:
+  - ai
+  - document-processing
+  - argo-workflows
+  - ollama
+  - minio
+  - openshift
+maintainers:
+  - name: AI Pipeline Team
+    email: team@ai-pipeline.local
+sources:
+  - https://github.com/yourusername/ai-document-pipeline
+dependencies:
+  # We'll manage Argo as part of our templates since we need specific configuration
+  # If you want to use the official Argo Helm chart as a dependency:
+  # - name: argo-workflows
+  #   version: "0.40.0"
+  #   repository: "https://argoproj.github.io/argo-helm"
+annotations:
+  # OpenShift specific annotations
+  "openshift.io/display-name": "AI Document Processing Pipeline"
+  "openshift.io/documentation-url": "https://github.com/yourusername/ai-document-pipeline"
+  "openshift.io/support-url": "https://github.com/yourusername/ai-document-pipeline/issues"

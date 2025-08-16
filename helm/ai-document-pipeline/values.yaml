@@ -1,0 +1,286 @@
+# Default values for ai-document-pipeline
+
+# CRD installation
+crds:
+  # Install CRDs with the chart (requires cluster-admin privileges)
+  install: true
+  # Keep CRDs on chart uninstall
+  keep: true
+
+# Global settings
+global:
+  # OpenShift project/namespace
+  namespace: argo-ai-demo
+  # Create namespace if it doesn't exist
+  createNamespace: false
+  # Base domain for routes
+  domain: apps-crc.testing
+  # Storage class (leave empty for default)
+  storageClass: ""
+
+# Argo Workflows configuration
+argo:
+  enabled: true
+  version: v3.5.0
+  server:
+    replicas: 1
+    secure: false  # Run in insecure mode for simplicity
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  controller:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  # Create OpenShift route
+  route:
+    enabled: true
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+
+# MinIO object storage
+minio:
+  enabled: true
+  # Credentials - override these!
+  auth:
+    rootUser: admin
+    rootPassword: changeme  # CHANGE THIS IN PRODUCTION
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  # Service ports
+  service:
+    port: 9000
+    consolePort: 9001
+  # Create OpenShift routes
+  route:
+    enabled: true
+    console:
+      enabled: true
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+  # Bucket configuration
+  buckets:
+    - name: argo-artifacts
+      policy: none
+      purge: false
+
+# Ollama AI model serving
+ollama:
+  enabled: true
+  image:
+    repository: docker.io/ollama/ollama
+    tag: latest
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: true
+    size: 20Gi
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 4Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  service:
+    port: 11434
+  # Create OpenShift route
+  route:
+    enabled: true
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+  # Models to preload
+  models:
+    - "llama3.2:3b"
+    - "mistral:7b"
+    - "phi3:mini"
+    - "gemma2:2b"
+
+# AI Workflow configuration
+workflows:
+  enabled: true
+  # Default model for workflows
+  defaultModel: "llama3.2:3b"
+  # Default priority
+  defaultPriority: "normal"
+  # Workflow timeout in minutes
+  timeoutMinutes: 30
+  # Sample documents for testing
+  sampleDocuments:
+    - name: kubernetes-readme
+      url: https://raw.githubusercontent.com/kubernetes/kubernetes/master/README.md
+      description: Kubernetes project documentation
+    - name: sample-invoice
+      url: https://raw.githubusercontent.com/argoproj/argo-workflows/main/examples/README.md
+      description: Sample invoice document
+    - name: sample-contract
+      url: https://raw.githubusercontent.com/minio/minio/master/README.md
+      description: Sample contract document
+
+# RBAC configuration
+rbac:
+  create: true
+  # Additional roles and bindings
+  additionalRoleBindings:
+    - name: default-admin
+      roleRef: admin
+      serviceAccount: default
+    - name: argo-admin
+      roleRef: admin
+      serviceAccount: argo
+    - name: argo-server-admin
+      roleRef: admin
+      serviceAccount: argo-server
+
+# Security Context Constraints (OpenShift specific)
+scc:
+  # Add service accounts to anyuid SCC
+  anyuid:
+    - default
+    - argo
+
+# ServiceAccount configuration
+serviceAccount:
+  create: true
+  annotations: {}
+
+# Image pull secrets
+imagePullSecrets: []
+
+# Model Loader configuration
+modelLoader:
+  image:
+    repository: quay.io/aasmith/ai-model-loader
+    tag: latest
+    pullPolicy: IfNotPresent
+
+# Dashboard configuration
+dashboard:
+  enabled: true
+
+  # Backend configuration
+  backend:
+    replicas: 1
+    image:
+      repository: quay.io/aasmith/ai-workflow-dashboard-backend
+      tag: latest
+      pullPolicy: IfNotPresent
+
+    # Persistence for SQLite database
+    persistence:
+      enabled: true
+      size: 1Gi
+
+    # Resource limits
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+    # Node environment
+    nodeEnv: production
+
+    # Additional environment variables
+    env: []
+
+  # Frontend configuration
+  frontend:
+    replicas: 2
+    image:
+      repository: quay.io/aasmith/ai-workflow-dashboard-frontend
+      tag: latest
+      pullPolicy: IfNotPresent
+
+    # Resource limits
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+    # Additional environment variables
+    env: []
+
+  # Route configuration (OpenShift specific)
+  route:
+    enabled: true
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+
+# Argo Events configuration for inbox pattern
+argoEvents:
+  enabled: true
+
+  # Event bus configuration
+  eventBus:
+    replicas: 3
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+  # Smart inbox configuration
+  inbox:
+    enabled: true
+    bucket: "documents"
+    prefix: "inbox/"
+    suffix: ""  # Accept all file types
+
+    # Folder structure for organized documents
+    folders:
+      invoices: "invoices"
+      contracts: "contracts"
+      technical: "technical"
+      correspondence: "correspondence"
+
+# Node selector for all pods
+nodeSelector: {}
+
+# Tolerations for all pods
+tolerations: []
+
+# Affinity for all pods
+affinity: {}
+
+# Pod Security Context
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container Security Context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true

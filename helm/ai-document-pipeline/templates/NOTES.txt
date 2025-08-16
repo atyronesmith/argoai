@@ -1,0 +1,84 @@
+🎉 {{ .Chart.Name }} has been deployed!
+
+Release Name: {{ .Release.Name }}
+Namespace: {{ include "ai-document-pipeline.namespace" . }}
+
+📋 Service URLs:
+{{- if .Values.argo.enabled }}
+  Argo Workflows UI: https://argo-server-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+{{- end }}
+{{- if .Values.minio.enabled }}
+  MinIO Console: https://minio-console-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+  MinIO API: https://minio-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+{{- end }}
+{{- if .Values.ollama.enabled }}
+  Ollama API: https://ollama-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+{{- end }}
+{{- if .Values.dashboard.enabled }}
+
+📊 Dashboard URLs:
+  Dashboard UI: https://{{ include "ai-document-pipeline.fullname" . }}-dashboard-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+  Dashboard API: https://{{ include "ai-document-pipeline.fullname" . }}-dashboard-api-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+  Dashboard WebSocket: https://{{ include "ai-document-pipeline.fullname" . }}-dashboard-ws-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+{{- end }}
+
+🔐 Credentials:
+{{- if not .Values.minio.auth.existingSecret }}
+  MinIO Root User: {{ .Values.minio.auth.rootUser }}
+  MinIO Root Password: (hidden - check values or secret)
+{{- else }}
+  MinIO credentials from secret: {{ .Values.minio.auth.existingSecret }}
+{{- end }}
+
+📝 Next Steps:
+
+1. Wait for all pods to be ready:
+   kubectl get pods -n {{ include "ai-document-pipeline.namespace" . }} -w
+
+2. Check if models are loaded (this may take several minutes):
+   kubectl logs -n {{ include "ai-document-pipeline.namespace" . }} -l app.kubernetes.io/component=ollama-models
+
+3. Submit a test workflow:
+   kubectl exec -n {{ include "ai-document-pipeline.namespace" . }} deploy/argo-server -- \
+     argo submit --from workflowtemplate/ai-document-processor --watch
+
+4. Access the Argo UI to monitor workflows:
+   https://argo-server-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+
+5. View artifacts in MinIO:
+   https://minio-console-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+{{- if .Values.dashboard.enabled }}
+
+6. Access the Dashboard for real-time workflow monitoring:
+   https://{{ include "ai-document-pipeline.fullname" . }}-dashboard-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+{{- end }}
+
+{{- if and .Values.argoEvents.enabled .Values.argoEvents.inbox.enabled }}
+
+📥 Smart Inbox Feature:
+The AI-powered document inbox is enabled! Drop documents into the inbox folder
+and they will be automatically classified, prioritized, and processed.
+
+How to use:
+1. Configure MinIO client:
+   mc alias set myminio http://minio-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }} admin <password>
+
+2. Drop documents into inbox:
+   mc cp document.pdf myminio/{{ .Values.argoEvents.inbox.bucket }}/{{ .Values.argoEvents.inbox.prefix }}
+
+3. Documents will be automatically:
+   • Classified by AI (invoice, contract, technical, correspondence)
+   • Prioritized (normal/urgent)
+   • Moved to: {{ .Values.argoEvents.inbox.bucket }}/[type]/[priority]/
+   • Processed with appropriate workflows
+
+4. Monitor processing:
+   kubectl get workflows -l source=inbox-sensor -w
+{{- end }}
+
+⚠️  Security Warning:
+{{- if eq .Values.minio.auth.rootPassword "changeme" }}
+   You are using default MinIO credentials! Please update them in production.
+{{- end }}
+
+For more information, visit: https://github.com/yourusername/ai-document-pipeline

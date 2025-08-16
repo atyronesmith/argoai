@@ -1,0 +1,76 @@
+{{- if and .Values.dashboard.enabled .Values.dashboard.route.enabled }}
+---
+# Frontend Route
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "ai-document-pipeline.fullname" . }}-dashboard
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard-frontend
+spec:
+  host: {{ include "ai-document-pipeline.fullname" . }}-dashboard-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+  to:
+    kind: Service
+    name: {{ include "ai-document-pipeline.fullname" . }}-dashboard-frontend
+  port:
+    targetPort: http
+  {{- if .Values.dashboard.route.tls }}
+  tls:
+    {{- toYaml .Values.dashboard.route.tls | nindent 4 }}
+  {{- end }}
+---
+# Backend API Route
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "ai-document-pipeline.fullname" . }}-dashboard-api
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard-backend
+  annotations:
+    # Enable WebSocket support
+    haproxy.router.openshift.io/timeout: 1h
+    haproxy.router.openshift.io/websocket: "true"
+spec:
+  host: {{ include "ai-document-pipeline.fullname" . }}-dashboard-api-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+  to:
+    kind: Service
+    name: {{ include "ai-document-pipeline.fullname" . }}-dashboard-backend
+  port:
+    targetPort: http
+  {{- if .Values.dashboard.route.tls }}
+  tls:
+    {{- toYaml .Values.dashboard.route.tls | nindent 4 }}
+  {{- end }}
+---
+# WebSocket Route
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "ai-document-pipeline.fullname" . }}-dashboard-ws
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard-backend
+  annotations:
+    # Enable WebSocket support
+    haproxy.router.openshift.io/timeout: 1h
+    # Disable cookie-based session affinity for WebSocket
+    haproxy.router.openshift.io/disable_cookies: "true"
+    # Enable WebSocket protocol
+    haproxy.router.openshift.io/websocket: "true"
+spec:
+  host: {{ include "ai-document-pipeline.fullname" . }}-dashboard-ws-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+  to:
+    kind: Service
+    name: {{ include "ai-document-pipeline.fullname" . }}-dashboard-backend
+  port:
+    targetPort: http
+  {{- if .Values.dashboard.route.tls }}
+  tls:
+    {{- toYaml .Values.dashboard.route.tls | nindent 4 }}
+  {{- end }}
+{{- end }}

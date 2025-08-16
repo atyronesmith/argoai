@@ -1,0 +1,196 @@
+{{- if and .Values.argoEvents.enabled .Values.argoEvents.inbox.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: inbox-document-processor
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: workflow-template
+spec:
+  entrypoint: process-inbox-document
+  arguments:
+    parameters:
+    - name: bucket_name
+    - name: object_key
+    - name: document_url
+    - name: model
+      value: {{ .Values.ollama.defaultModel | quote }}
+
+  templates:
+  - name: process-inbox-document
+    dag:
+      tasks:
+      # Step 1: Classify the document using AI
+      - name: classify
+        template: classify-document
+        arguments:
+          parameters:
+          - name: document_url
+            value: "{{`{{workflow.parameters.document_url}}`}}"
+          - name: model
+            value: "{{`{{workflow.parameters.model}}`}}"
+
+      # Step 2: Move document to appropriate folder
+      - name: organize
+        template: move-to-folder
+        dependencies: [classify]
+        arguments:
+          parameters:
+          - name: bucket_name
+            value: "{{`{{workflow.parameters.bucket_name}}`}}"
+          - name: object_key
+            value: "{{`{{workflow.parameters.object_key}}`}}"
+          - name: document_type
+            value: "{{`{{tasks.classify.outputs.parameters.document_type}}`}}"
+          - name: priority
+            value: "{{`{{tasks.classify.outputs.parameters.priority}}`}}"
+
+      # Step 3: Process the document in its new location
+      - name: process
+        templateRef:
+          name: ai-document-processor
+          template: analyze-document
+        dependencies: [organize]
+        arguments:
+          parameters:
+          - name: document_url
+            value: "{{`{{tasks.organize.outputs.parameters.new_url}}`}}"
+          - name: model
+            value: "{{`{{workflow.parameters.model}}`}}"
+
+  # Classify document using Ollama
+  - name: classify-document
+    inputs:
+      parameters:
+      - name: document_url
+      - name: model
+    outputs:
+      parameters:
+      - name: document_type
+        valueFrom:
+          path: /tmp/classification.json
+          jqFilter: .document_type
+      - name: priority
+        valueFrom:
+          path: /tmp/classification.json
+          jqFilter: .priority
+      - name: confidence
+        valueFrom:
+          path: /tmp/classification.json
+          jqFilter: .confidence
+    script:
+      image: curlimages/curl:latest
+      command: [sh]
+      source: |
+        set -e
+        echo "Classifying document from inbox..."
+
+        # Download document preview (first 2KB for classification)
+        curl -s "{{`{{inputs.parameters.document_url}}`}}" | head -c 2048 > /tmp/preview.txt
+
+        # Create classification prompt
+        PROMPT="Classify this document into one of these categories: invoice, contract, techdoc, correspondence.
+        Also determine if it's urgent or normal priority.
+
+        Look for keywords:
+        - Invoice: invoice, bill, payment, due date, amount
+        - Contract: agreement, terms, parties, signature
+        - Technical: documentation, API, specification, version
+        - Correspondence: email, memo, letter, meeting
+        - Urgent indicators: overdue, immediate, deadline, critical, urgent
+
+        Document preview:
+        $(cat /tmp/preview.txt)
+
+        Respond ONLY with valid JSON in this exact format:
+        {\"document_type\": \"invoice|contract|techdoc|correspondence\", \"priority\": \"normal|urgent\", \"confidence\": 0.0-1.0}"
+
+        # Call Ollama API
+        RESPONSE=$(curl -s -X POST http://{{ .Values.ollama.service.name }}:{{ .Values.ollama.service.port }}/api/generate \
+          -d "{
+            \"model\": \"{{`{{inputs.parameters.model}}`}}\",
+            \"prompt\": \"$PROMPT\",
+            \"stream\": false,
+            \"format\": \"json\"
+          }" | grep -o '"response":"[^"]*' | cut -d'"' -f4)
+
+        # Extract JSON from response
+        echo "$RESPONSE" | grep -o '{[^}]*}' > /tmp/classification.json || echo '{"document_type":"correspondence","priority":"normal","confidence":0.5}' > /tmp/classification.json
+
+        echo "Classification result:"
+        cat /tmp/classification.json
+
+  # Move document to organized folder
+  - name: move-to-folder
+    inputs:
+      parameters:
+      - name: bucket_name
+      - name: object_key
+      - name: document_type
+      - name: priority
+    outputs:
+      parameters:
+      - name: new_url
+        valueFrom:
+          path: /tmp/new_url.txt
+    container:
+      image: minio/mc:latest
+      command: [sh]
+      args:
+      - -c
+      - |
+        set -e
+
+        # Configure MinIO client
+        mc alias set myminio http://{{ .Values.minio.service.name }}:{{ .Values.minio.service.port }} \
+          $MINIO_ACCESS_KEY $MINIO_SECRET_KEY --insecure
+
+        # Determine target folder
+        case "{{`{{inputs.parameters.document_type}}`}}" in
+          invoice) TARGET_BASE="{{ .Values.argoEvents.inbox.folders.invoices }}" ;;
+          contract) TARGET_BASE="{{ .Values.argoEvents.inbox.folders.contracts }}" ;;
+          techdoc) TARGET_BASE="{{ .Values.argoEvents.inbox.folders.technical }}" ;;
+          *) TARGET_BASE="{{ .Values.argoEvents.inbox.folders.correspondence }}" ;;
+        esac
+
+        # Add priority subfolder
+        if [ "{{`{{inputs.parameters.priority}}`}}" = "urgent" ]; then
+          TARGET_FOLDER="${TARGET_BASE}/urgent"
+        else
+          TARGET_FOLDER="${TARGET_BASE}/normal"
+        fi
+
+        # Create organized filename
+        FILENAME=$(basename "{{`{{inputs.parameters.object_key}}`}}")
+        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+        NEW_KEY="${TARGET_FOLDER}/${TIMESTAMP}_${FILENAME}"
+
+        echo "Moving document:"
+        echo "  From: {{`{{inputs.parameters.object_key}}`}}"
+        echo "  To: ${NEW_KEY}"
+        echo "  Type: {{`{{inputs.parameters.document_type}}`}} ({{`{{inputs.parameters.priority}}`}})"
+
+        # Copy to new location
+        mc cp "myminio/{{`{{inputs.parameters.bucket_name}}`}}/{{`{{inputs.parameters.object_key}}`}}" \
+              "myminio/{{`{{inputs.parameters.bucket_name}}`}}/${NEW_KEY}"
+
+        # Delete from inbox
+        mc rm "myminio/{{`{{inputs.parameters.bucket_name}}`}}/{{`{{inputs.parameters.object_key}}`}}"
+
+        # Output new URL
+        echo "http://{{ .Values.minio.service.name }}:{{ .Values.minio.service.port }}/{{`{{inputs.parameters.bucket_name}}`}}/${NEW_KEY}" > /tmp/new_url.txt
+
+        echo "✓ Document organized successfully"
+      env:
+      - name: MINIO_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: {{ .Values.minio.auth.existingSecret }}
+            key: root-user
+      - name: MINIO_SECRET_KEY
+        valueFrom:
+          secretKeyRef:
+            name: {{ .Values.minio.auth.existingSecret }}
+            key: root-password
+{{- end }}

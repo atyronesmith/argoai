@@ -1,0 +1,60 @@
+{{- if and .Values.argoEvents.enabled .Values.argoEvents.inbox.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: inbox-processor
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sensor
+spec:
+  template:
+    serviceAccountName: {{ include "ai-document-pipeline.serviceAccountName" . }}-events
+  dependencies:
+    - name: inbox-file
+      eventSourceName: document-inbox
+      eventName: inbox
+  triggers:
+    - template:
+        name: classify-and-process
+        k8s:
+          operation: create
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: inbox-doc-
+                namespace: {{ include "ai-document-pipeline.namespace" . }}
+                labels:
+                  source: inbox-sensor
+                  {{- include "ai-document-pipeline.labels" . | nindent 18 }}
+              spec:
+                serviceAccountName: {{ include "ai-document-pipeline.serviceAccountName" . }}
+                workflowTemplateRef:
+                  name: inbox-document-processor
+                arguments:
+                  parameters:
+                  - name: bucket_name
+                    value: ""
+                  - name: object_key
+                    value: ""
+                  - name: document_url
+                    value: ""
+                  - name: model
+                    value: {{ .Values.ollama.defaultModel | quote }}
+          parameters:
+            - src:
+                dependencyName: inbox-file
+                dataKey: notification.0.s3.bucket.name
+              dest: spec.arguments.parameters.0.value
+            - src:
+                dependencyName: inbox-file
+                dataKey: notification.0.s3.object.key
+              dest: spec.arguments.parameters.1.value
+            - src:
+                dependencyName: inbox-file
+                dataTemplate: |
+                  http://{{ .Values.minio.service.name }}.{{ include "ai-document-pipeline.namespace" . }}.svc.cluster.local:{{ .Values.minio.service.port }}/{{ "{{ .Input.notification.0.s3.bucket.name }}" }}/{{ "{{ .Input.notification.0.s3.object.key }}" }}
+              dest: spec.arguments.parameters.2.value
+{{- end }}

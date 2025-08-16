@@ -1,0 +1,67 @@
+{{- if and .Values.ollama.enabled .Values.ollama.models }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ai-document-pipeline.fullname" . }}-load-models
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama-models
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "ai-document-pipeline.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ollama-models
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "ai-document-pipeline.serviceAccountName" . }}
+      initContainers:
+      - name: wait-for-ollama
+        image: registry.access.redhat.com/ubi8/ubi:latest
+        command:
+        - bash
+        - -c
+        - |
+          echo "Waiting for Ollama to be ready..."
+          until curl -sf http://ollama:{{ .Values.ollama.service.port }}/api/tags > /dev/null; do
+            echo "Ollama not ready yet..."
+            sleep 5
+          done
+          echo "Ollama is ready!"
+      containers:
+      - name: load-models
+        image: {{ .Values.modelLoader.image.repository | default "nicolaka/netshoot" }}:{{ .Values.modelLoader.image.tag | default "latest" }}
+        imagePullPolicy: {{ .Values.modelLoader.image.pullPolicy | default "IfNotPresent" }}
+        command:
+        - bash
+        - -c
+        - |
+          set -e
+          echo "Loading AI models into Ollama..."
+          OLLAMA_HOST="http://ollama:{{ .Values.ollama.service.port }}"
+
+          # Check currently loaded models
+          echo "Checking loaded models..."
+          curl -s ${OLLAMA_HOST}/api/tags | jq -r '.models[]?.name' || echo "No models loaded yet"
+
+          # Load each model
+          {{- range .Values.ollama.models }}
+          echo "Loading model: {{ . }}"
+          curl -X POST ${OLLAMA_HOST}/api/pull \
+            -H "Content-Type: application/json" \
+            -d '{"name": "{{ . }}"}' \
+            --max-time 3600
+          echo "Model {{ . }} loaded successfully"
+          {{- end }}
+
+          echo "All models loaded!"
+
+          # List final models
+          echo "Final loaded models:"
+          curl -s ${OLLAMA_HOST}/api/tags | jq -r '.models[]?.name' || echo "Unable to list models"
+{{- end }}

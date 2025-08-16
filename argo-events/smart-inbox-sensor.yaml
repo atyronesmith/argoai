@@ -1,0 +1,244 @@
+# Smart Inbox Sensor
+# Watches a single inbox folder, classifies documents, and moves them to appropriate folders
+
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: document-inbox
+  namespace: argo-ai-demo
+spec:
+  minio:
+    inbox:
+      endpoint: minio.argo-ai-demo.svc.cluster.local:9000
+      bucket:
+        name: documents
+      events:
+        - s3:ObjectCreated:*
+      filter:
+        prefix: "inbox/"  # Single drop folder
+        suffix: ""        # Accept all file types
+      insecure: true
+      accessKey:
+        name: minio-credentials
+        key: root-user
+      secretKey:
+        name: minio-credentials
+        key: root-password
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: smart-inbox-processor
+  namespace: argo-ai-demo
+spec:
+  template:
+    serviceAccountName: argo-events-sa
+  dependencies:
+    - name: inbox-file
+      eventSourceName: document-inbox
+      eventName: inbox
+  triggers:
+    - template:
+        name: classify-and-process
+        k8s:
+          operation: create
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: classify-document-
+                namespace: argo-ai-demo
+                labels:
+                  source: inbox-sensor
+              spec:
+                serviceAccountName: argo
+                entrypoint: classify-and-process
+                arguments:
+                  parameters:
+                  - name: bucket_name
+                    value: ""
+                  - name: object_key
+                    value: ""
+                  - name: document_url
+                    value: ""
+                templates:
+                - name: classify-and-process
+                  dag:
+                    tasks:
+                    # Step 1: Classify the document
+                    - name: classify-document
+                      template: ai-classify
+                      arguments:
+                        parameters:
+                        - name: document_url
+                          value: "{{workflow.parameters.document_url}}"
+
+                    # Step 2: Move to appropriate folder based on classification
+                    - name: move-document
+                      template: move-to-folder
+                      dependencies: [classify-document]
+                      arguments:
+                        parameters:
+                        - name: source_key
+                          value: "{{workflow.parameters.object_key}}"
+                        - name: document_type
+                          value: "{{tasks.classify-document.outputs.parameters.document_type}}"
+                        - name: priority
+                          value: "{{tasks.classify-document.outputs.parameters.priority}}"
+
+                    # Step 3: Process the document from its new location
+                    - name: process-document
+                      templateRef:
+                        name: ai-document-processor
+                        template: process-document
+                      dependencies: [move-document]
+                      arguments:
+                        parameters:
+                        - name: document_url
+                          value: "{{tasks.move-document.outputs.parameters.new_url}}"
+                        - name: model
+                          value: "llama3.2:3b"
+
+                # AI Classification template
+                - name: ai-classify
+                  inputs:
+                    parameters:
+                    - name: document_url
+                  outputs:
+                    parameters:
+                    - name: document_type
+                      valueFrom:
+                        path: /tmp/classification.json
+                        jqFilter: .document_type
+                    - name: priority
+                      valueFrom:
+                        path: /tmp/classification.json
+                        jqFilter: .priority
+                    - name: confidence
+                      valueFrom:
+                        path: /tmp/classification.json
+                        jqFilter: .confidence
+                  script:
+                    image: curlimages/curl:latest
+                    command: [sh]
+                    source: |
+                      # Call Ollama to classify the document
+                      echo "Classifying document: {{inputs.parameters.document_url}}"
+
+                      # Download document
+                      curl -s "{{inputs.parameters.document_url}}" -o /tmp/document
+
+                      # Extract text preview (first 1000 chars for classification)
+                      head -c 1000 /tmp/document > /tmp/preview.txt
+
+                      # Prepare prompt for classification
+                      cat > /tmp/prompt.txt << 'EOF'
+                      Classify this document into one of these categories: invoice, contract, techdoc, correspondence.
+                      Also determine if it's urgent or normal priority.
+
+                      Document preview:
+                      $(cat /tmp/preview.txt)
+
+                      Respond in JSON format only:
+                      {"document_type": "type", "priority": "normal|urgent", "confidence": 0.95}
+                      EOF
+
+                      # Call Ollama API
+                      curl -s -X POST http://ollama:11434/api/generate \
+                        -d '{
+                          "model": "llama3.2:3b",
+                          "prompt": "'"$(cat /tmp/prompt.txt | tr '\n' ' ')"'",
+                          "stream": false,
+                          "format": "json"
+                        }' | jq -r '.response' > /tmp/classification.json
+
+                      # Default fallback if classification fails
+                      if [ ! -s /tmp/classification.json ]; then
+                        echo '{"document_type": "correspondence", "priority": "normal", "confidence": 0.5}' > /tmp/classification.json
+                      fi
+
+                      cat /tmp/classification.json
+
+                # Move document to appropriate folder
+                - name: move-to-folder
+                  inputs:
+                    parameters:
+                    - name: source_key
+                    - name: document_type
+                    - name: priority
+                  outputs:
+                    parameters:
+                    - name: new_url
+                      valueFrom:
+                        path: /tmp/new_url.txt
+                  script:
+                    image: minio/mc:latest
+                    command: [sh]
+                    source: |
+                      # Configure MinIO client
+                      mc alias set myminio http://minio:9000 admin changeme --insecure
+
+                      # Determine target folder based on classification
+                      BUCKET="myminio/documents"
+                      SOURCE_PATH="{{inputs.parameters.source_key}}"
+                      FILENAME=$(basename "$SOURCE_PATH")
+
+                      case "{{inputs.parameters.document_type}}" in
+                        "invoice")
+                          TARGET_FOLDER="invoices"
+                          ;;
+                        "contract")
+                          TARGET_FOLDER="contracts"
+                          ;;
+                        "techdoc")
+                          TARGET_FOLDER="technical"
+                          ;;
+                        "correspondence")
+                          TARGET_FOLDER="correspondence"
+                          ;;
+                        *)
+                          TARGET_FOLDER="unclassified"
+                          ;;
+                      esac
+
+                      # Add priority subfolder for urgent items
+                      if [ "{{inputs.parameters.priority}}" = "urgent" ]; then
+                        TARGET_FOLDER="${TARGET_FOLDER}/urgent"
+                      fi
+
+                      # Create target path with timestamp
+                      TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                      TARGET_PATH="${TARGET_FOLDER}/${TIMESTAMP}_${FILENAME}"
+
+                      echo "Moving from: $SOURCE_PATH"
+                      echo "Moving to: $TARGET_PATH"
+
+                      # Copy to new location
+                      mc cp "${BUCKET}/${SOURCE_PATH}" "${BUCKET}/${TARGET_PATH}"
+
+                      # Delete from inbox
+                      mc rm "${BUCKET}/${SOURCE_PATH}"
+
+                      # Output new URL
+                      echo "http://minio:9000/documents/${TARGET_PATH}" > /tmp/new_url.txt
+
+                      # Log the move
+                      echo "Document classified as {{inputs.parameters.document_type}} ({{inputs.parameters.priority}})"
+                      echo "Moved to: ${TARGET_PATH}"
+
+          parameters:
+            # Extract event data
+            - src:
+                dependencyName: inbox-file
+                dataKey: notification.0.s3.bucket.name
+              dest: spec.arguments.parameters.0.value
+            - src:
+                dependencyName: inbox-file
+                dataKey: notification.0.s3.object.key
+              dest: spec.arguments.parameters.1.value
+            - src:
+                dependencyName: inbox-file
+                dataTemplate: "http://minio.argo-ai-demo.svc.cluster.local:9000/{{ .Input.notification.0.s3.bucket.name }}/{{ .Input.notification.0.s3.object.key }}"
+              dest: spec.arguments.parameters.2.value

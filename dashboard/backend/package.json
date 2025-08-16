@@ -1,0 +1,33 @@
+{
+  "name": "ai-workflow-backend",
+  "version": "1.0.0",
+  "description": "Backend API for AI Workflow Dashboard",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "sqlite3": "^5.1.6",
+    "ws": "^8.14.2",
+    "axios": "^1.6.0",
+    "compression": "^1.7.4",
+    "helmet": "^7.1.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "@types/ws": "^8.5.8",
+    "@types/compression": "^1.7.5",
+    "@types/node": "^20.8.10",
+    "typescript": "^5.2.2",
+    "ts-node-dev": "^2.0.0",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.8"
+  }
+}

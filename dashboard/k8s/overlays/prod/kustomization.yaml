@@ -1,0 +1,34 @@
+# Production overlay for Kustomize
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: argo-ai-prod
+
+bases:
+  - ../../base
+
+# Prod-specific image tags (using specific versions)
+images:
+  - name: quay.io/aasmith/ai-workflow-dashboard-backend
+    newTag: v1.0.0  # Change this to your production version
+  - name: quay.io/aasmith/ai-workflow-dashboard-frontend
+    newTag: v1.0.0  # Change this to your production version
+
+# Prod-specific patches
+patchesStrategicMerge:
+  - deployment-patch.yaml
+  - route-patch.yaml
+
+# Prod ConfigMap
+configMapGenerator:
+  - name: dashboard-config
+    literals:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=info
+      - API_TIMEOUT=60s
+
+# Prod secrets reference
+secretGenerator:
+  - name: dashboard-secrets
+    files:
+      - secrets/prod-credentials.env

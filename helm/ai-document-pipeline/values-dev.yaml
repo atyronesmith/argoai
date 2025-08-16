@@ -1,0 +1,79 @@
+# Development environment values
+
+# Use default CRC domain
+global:
+  domain: apps-crc.testing
+
+# MinIO with dev credentials
+# WARNING: Change these values before deployment!
+minio:
+  auth:
+    rootUser: admin
+    rootPassword: changeme  # CHANGE THIS - Use environment variable in production
+  persistence:
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Ollama with reduced resources for dev
+ollama:
+  persistence:
+    size: 10Gi
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  # Only load small models in dev
+  models:
+    - "llama3.2:3b"
+    - "phi3:mini"
+
+# Dashboard with reduced resources for dev
+dashboard:
+  backend:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+  frontend:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+# Argo with minimal resources
+argo:
+  server:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+  controller:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi

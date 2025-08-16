@@ -1,0 +1,32 @@
+{{- if .Values.argo.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workflow-controller-configmap
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: argo-controller
+data:
+  config: |
+    namespace: {{ include "ai-document-pipeline.namespace" . }}
+    artifactRepository:
+      s3:
+        endpoint: {{ include "ai-document-pipeline.minioEndpoint" . }}
+        bucket: {{ index .Values.minio.buckets 0 "name" }}
+        insecure: true
+        accessKeySecret:
+          name: minio-credentials
+          key: root-user
+        secretKeySecret:
+          name: minio-credentials
+          key: root-password
+    executor:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+{{- end }}

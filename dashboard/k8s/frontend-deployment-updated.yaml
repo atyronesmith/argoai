@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-dashboard-frontend
+  namespace: argo-ai-demo
+  labels:
+    app: ai-dashboard-frontend
+    component: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ai-dashboard-frontend
+  template:
+    metadata:
+      labels:
+        app: ai-dashboard-frontend
+        component: frontend
+    spec:
+      containers:
+      - name: frontend
+        image: quay.io/aasmith/ai-workflow-dashboard-frontend:873c59c-dirty
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: REACT_APP_API_URL
+          value: "http://ai-dashboard-backend.argo-ai-demo.svc.cluster.local:3001"
+        - name: REACT_APP_WS_URL
+          value: "ws://ai-dashboard-backend.argo-ai-demo.svc.cluster.local:3001"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-dashboard-frontend
+  namespace: argo-ai-demo
+  labels:
+    app: ai-dashboard-frontend
+spec:
+  selector:
+    app: ai-dashboard-frontend
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  type: ClusterIP

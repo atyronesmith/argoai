@@ -1,0 +1,19 @@
+{{- if .Values.dashboard.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ai-document-pipeline.fullname" . }}-dashboard-frontend
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard-frontend
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  selector:
+    {{- include "ai-document-pipeline.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard-frontend
+{{- end }}

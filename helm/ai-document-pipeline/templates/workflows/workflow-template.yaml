@@ -1,0 +1,144 @@
+{{- if .Values.workflows.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: ai-document-processor
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+spec:
+  entrypoint: process-document
+  serviceAccountName: argo
+
+  arguments:
+    parameters:
+    - name: doc-url
+      value: "https://raw.githubusercontent.com/kubernetes/kubernetes/master/README.md"
+    - name: model
+      value: {{ .Values.workflows.defaultModel | quote }}
+    - name: priority
+      value: {{ .Values.workflows.defaultPriority | quote }}
+
+  templates:
+  - name: process-document
+    dag:
+      tasks:
+      - name: ingest-document
+        template: document-ingestion
+        arguments:
+          parameters:
+          - name: url
+            value: "{{`{{workflow.parameters.doc-url}}`}}"
+
+      - name: classify-document
+        template: ai-classification
+        dependencies: [ingest-document]
+        arguments:
+          artifacts:
+          - name: document
+            from: "{{`{{tasks.ingest-document.outputs.artifacts.document}}`}}"
+          parameters:
+          - name: model
+            value: "{{`{{workflow.parameters.model}}`}}"
+
+      - name: extract-information
+        template: ai-extraction
+        dependencies: [classify-document]
+        arguments:
+          artifacts:
+          - name: document
+            from: "{{`{{tasks.ingest-document.outputs.artifacts.document}}`}}"
+          parameters:
+          - name: doc-type
+            value: "{{`{{tasks.classify-document.outputs.parameters.doc-type}}`}}"
+          - name: model
+            value: "{{`{{workflow.parameters.model}}`}}"
+
+      - name: route-document
+        template: apply-business-rules
+        dependencies: [extract-information]
+        arguments:
+          parameters:
+          - name: doc-type
+            value: "{{`{{tasks.classify-document.outputs.parameters.doc-type}}`}}"
+          - name: priority
+            value: "{{`{{tasks.classify-document.outputs.parameters.priority}}`}}"
+          artifacts:
+          - name: extracted-data
+            from: "{{`{{tasks.extract-information.outputs.artifacts.extracted-data}}`}}"
+
+      - name: generate-report
+        template: create-final-report
+        dependencies: [route-document]
+        arguments:
+          artifacts:
+          - name: routing-result
+            from: "{{`{{tasks.route-document.outputs.artifacts.result}}`}}"
+
+  # Document ingestion template
+  - name: document-ingestion
+    inputs:
+      parameters:
+      - name: url
+    outputs:
+      artifacts:
+      - name: document
+        path: /tmp/document.txt
+        s3:
+          key: "{{`{{workflow.name}}`}}/document.txt"
+    script:
+      image: registry.access.redhat.com/ubi8/ubi:latest
+      command: [bash]
+      source: |
+        echo "Downloading document from {{`{{inputs.parameters.url}}`}}"
+        curl -sL "{{`{{inputs.parameters.url}}`}}" -o /tmp/document.txt
+        echo "Document downloaded successfully"
+
+  # AI Classification template
+  - name: ai-classification
+    inputs:
+      artifacts:
+      - name: document
+        path: /tmp/document.txt
+      parameters:
+      - name: model
+    outputs:
+      parameters:
+      - name: doc-type
+        valueFrom:
+          path: /tmp/classification.json
+          jqFilter: .document_type
+      - name: priority
+        valueFrom:
+          path: /tmp/classification.json
+          jqFilter: .priority
+    script:
+      image: quay.io/argoproj/argocli:{{ .Values.argo.version }}
+      command: [sh]
+      source: |
+        # In production, this would call Ollama API
+        # For now, simulate classification
+        cat > /tmp/classification.json << EOF
+        {
+          "document_type": "technical_doc",
+          "priority": "normal",
+          "confidence": 0.92
+        }
+        EOF
+
+  # More templates would go here...
+  # This is a simplified version for the Helm chart
+
+---
+# ConfigMap for sample documents
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sample-documents
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+data:
+  documents.json: |
+    {{ .Values.workflows.sampleDocuments | toJson | nindent 4 }}
+{{- end }}

@@ -1,0 +1,111 @@
+{{- if .Values.crds.install }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ai-document-pipeline.fullname" . }}-install-crds
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-installer
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "ai-document-pipeline.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: crd-installer
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "ai-document-pipeline.fullname" . }}-crd-installer
+      containers:
+      - name: install-crds
+        image: bitnami/kubectl:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "Installing Argo Workflows CRDs..."
+
+          # Argo Workflows CRDs
+          kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-workflows/v3.5.2/manifests/base/crds/full/argoproj.io_clusterworkflowtemplates.yaml
+          kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-workflows/v3.5.2/manifests/base/crds/full/argoproj.io_cronworkflows.yaml
+          kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-workflows/v3.5.2/manifests/base/crds/full/argoproj.io_workflows.yaml
+          kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-workflows/v3.5.2/manifests/base/crds/full/argoproj.io_workflowtemplates.yaml
+          kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-workflows/v3.5.2/manifests/base/crds/full/argoproj.io_workflowtasksets.yaml
+
+          echo "Installing Argo Events CRDs..."
+
+          # Argo Events CRDs
+          kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-events/v1.9.0/manifests/crds/argoproj.io_eventbus.yaml
+          kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-events/v1.9.0/manifests/crds/argoproj.io_eventsources.yaml
+          kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-events/v1.9.0/manifests/crds/argoproj.io_sensors.yaml
+
+          echo "Waiting for CRDs to be established..."
+
+          # Wait for Argo Workflows CRDs
+          kubectl wait --for condition=established --timeout=60s crd/workflows.argoproj.io
+          kubectl wait --for condition=established --timeout=60s crd/workflowtemplates.argoproj.io
+          kubectl wait --for condition=established --timeout=60s crd/clusterworkflowtemplates.argoproj.io
+          kubectl wait --for condition=established --timeout=60s crd/cronworkflows.argoproj.io
+
+          # Wait for Argo Events CRDs
+          kubectl wait --for condition=established --timeout=60s crd/eventbus.argoproj.io
+          kubectl wait --for condition=established --timeout=60s crd/eventsources.argoproj.io
+          kubectl wait --for condition=established --timeout=60s crd/sensors.argoproj.io
+
+          echo "All CRDs installed successfully!"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "ai-document-pipeline.fullname" . }}-crd-installer
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-installer
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-11"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "ai-document-pipeline.fullname" . }}-crd-installer
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-installer
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-11"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["customresourcedefinitions"]
+  verbs: ["get", "list", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "ai-document-pipeline.fullname" . }}-crd-installer
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-installer
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-11"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "ai-document-pipeline.fullname" . }}-crd-installer
+subjects:
+- kind: ServiceAccount
+  name: {{ include "ai-document-pipeline.fullname" . }}-crd-installer
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+{{- end }}

@@ -1,0 +1,74 @@
+{{- if .Values.argo.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workflow-controller
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: argo-controller
+spec:
+  replicas: {{ .Values.argo.controller.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ai-document-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: argo-controller
+  template:
+    metadata:
+      labels:
+        {{- include "ai-document-pipeline.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: argo-controller
+    spec:
+      serviceAccountName: argo
+      containers:
+      - name: workflow-controller
+        image: quay.io/argoproj/workflow-controller:{{ .Values.argo.version }}
+        command:
+        - workflow-controller
+        args:
+        - --configmap
+        - workflow-controller-configmap
+        - --executor-image
+        - quay.io/argoproj/argoexec:{{ .Values.argo.version }}
+        - --namespaced
+        env:
+        - name: LEADER_ELECTION_IDENTITY
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
+        ports:
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        - containerPort: 6060
+          name: telemetry
+          protocol: TCP
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /healthz
+            port: 6060
+          initialDelaySeconds: 90
+          periodSeconds: 60
+          timeoutSeconds: 30
+        resources:
+          {{- toYaml .Values.argo.controller.resources | nindent 10 }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

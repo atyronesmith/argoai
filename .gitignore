@@ -8,6 +8,9 @@ pull-secret.txt
 pull-secret.json
 *-credentials.txt
 *-credentials.json
+secrets/registry.conf
+secrets/*.conf
+!secrets/*.conf.example
 
 # Temporary files
 *.tmp

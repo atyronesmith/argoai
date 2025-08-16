@@ -1,0 +1,49 @@
+# Production-specific deployment patches
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-dashboard-backend
+spec:
+  replicas: 3  # More replicas for HA
+  template:
+    spec:
+      containers:
+      - name: backend
+        imagePullPolicy: IfNotPresent  # Use cached images in prod
+        env:
+        - name: NODE_ENV
+          value: production
+        - name: LOG_LEVEL
+          value: info
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-dashboard-frontend
+spec:
+  replicas: 2  # Multiple frontend replicas
+  template:
+    spec:
+      containers:
+      - name: frontend
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"

@@ -1,0 +1,91 @@
+{{- if .Values.dashboard.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ai-document-pipeline.fullname" . }}-dashboard-backend
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard-backend
+spec:
+  replicas: {{ .Values.dashboard.backend.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ai-document-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dashboard-backend
+  template:
+    metadata:
+      labels:
+        {{- include "ai-document-pipeline.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: dashboard-backend
+    spec:
+      serviceAccountName: {{ include "ai-document-pipeline.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: backend
+        image: "{{ .Values.dashboard.backend.image.repository }}:{{ .Values.dashboard.backend.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.dashboard.backend.image.pullPolicy }}
+        ports:
+        - containerPort: 3001
+          name: http
+        env:
+        - name: NODE_ENV
+          value: {{ .Values.dashboard.backend.nodeEnv | default "production" }}
+        - name: PORT
+          value: "3001"
+        - name: ARGO_SERVER
+          value: http://argo-server.{{ include "ai-document-pipeline.namespace" . }}.svc.cluster.local:2746
+        - name: ARGO_NAMESPACE
+          value: {{ include "ai-document-pipeline.namespace" . }}
+        - name: MINIO_ENDPOINT
+          value: {{ include "ai-document-pipeline.minioEndpoint" . }}
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: root-user
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: root-password
+        {{- with .Values.dashboard.backend.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.dashboard.backend.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: data
+          mountPath: /opt/app-root/src/data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: {{ include "ai-document-pipeline.fullname" . }}-dashboard-sqlite
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

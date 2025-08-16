@@ -1,0 +1,88 @@
+{{- if .Values.ollama.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ai-document-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ollama
+  template:
+    metadata:
+      labels:
+        {{- include "ai-document-pipeline.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ollama
+    spec:
+      serviceAccountName: {{ include "ai-document-pipeline.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: ollama
+        image: {{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}
+        imagePullPolicy: {{ .Values.ollama.image.pullPolicy }}
+        env:
+        - name: OLLAMA_HOST
+          value: "0.0.0.0"
+        - name: OLLAMA_MODELS
+          value: "/home/ollama/.ollama/models"
+        - name: HOME
+          value: "/home/ollama"
+        ports:
+        - containerPort: 11434
+          name: api
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /
+            port: api
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: api
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        resources:
+          {{- toYaml .Values.ollama.resources | nindent 10 }}
+        volumeMounts:
+        - name: ollama-data
+          mountPath: /home/ollama/.ollama
+        - name: ollama-home
+          mountPath: /home/ollama
+      volumes:
+      - name: ollama-data
+        {{- if .Values.ollama.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: ollama-pvc
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      - name: ollama-home
+        emptyDir: {}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- with .Values.ollama.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- else }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

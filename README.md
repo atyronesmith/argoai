@@ -25,6 +25,8 @@ This project implements an enterprise-grade document processing pipeline that le
 - Automated setup and deployment scripts
 - Idempotent installation process (safe to run multiple times)
 - AI-powered document processing workflows
+- **NEW: Smart Inbox** - Drop documents in one place, AI organizes them automatically
+- Event-driven architecture with Argo Events
 - Scalable architecture suitable for production deployment
 - Complete local development environment
 
@@ -75,17 +77,32 @@ cd argoai
 # Make scripts executable
 chmod +x *.sh
 
-# Run the complete setup
-./setup-crc-openshift.sh
+# Option 1: Run the new modular setup (recommended)
+./setup.sh                    # Sets up CRC and installs all tools (Helm, Argo CLI, MinIO Client, jq)
+./deploy-with-helm.sh         # Deploys services using Helm (includes CRD installation)
+
+# Option 2: Run the legacy all-in-one setup
+./scripts/setup-crc-openshift.sh      # Complete setup (deprecated, doesn't install CLI tools)
 ```
 
-The script will:
+The setup.sh script will:
 - Guide you through CRC installation if needed
 - Prompt for your Red Hat pull secret (hidden input)
 - Set up OpenShift Local with proper resources
-- Deploy all required services (Argo, Ollama, MinIO)
-- Configure integrations and security
+- Install required CLI tools:
+  - **Helm** - Package manager for Kubernetes
+  - **Argo CLI** - Native workflow management commands
+  - **MinIO Client (mc)** - Object storage management
+  - **jq** - JSON processing utility
+- Configure the OpenShift environment
 - Display access URLs and credentials
+
+Then deploy-with-helm.sh will:
+- Deploy all required services (Argo, Ollama, MinIO)
+- Load AI models into Ollama
+- Configure integrations and security
+
+> **📚 For detailed Helm deployment options and configurations, see the [Helm Chart README](./helm/ai-document-pipeline/README.md)**
 
 ### 3. Set Up Your Environment
 ```bash
@@ -96,7 +113,7 @@ source ./setup-env.sh
 ### 4. Load AI Models
 ```bash
 # Load the recommended model for document processing
-./ollama-load-model.sh -m llama3.2:3b
+./scripts/ollama-load-model.sh -m llama3.2:3b
 
 # Or use the convenience function after sourcing setup-env.sh
 load-model llama3.2:3b
@@ -108,18 +125,20 @@ load-model llama3.2:3b
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `setup-crc-openshift.sh` | Main setup script - installs and configures everything | `./setup-crc-openshift.sh` |
+| `setup.sh` | **NEW** - Setup OpenShift Local (CRC) and install all tools (Helm, Argo CLI, MinIO Client, jq) | `./setup.sh` |
+| `deploy-with-helm.sh` | **NEW** - Deploy services using Helm charts | `./deploy-with-helm.sh` |
+| `setup-crc-openshift.sh` | ⚠️ **Deprecated** - Legacy all-in-one setup script | `./scripts/setup-crc-openshift.sh` |
 | `setup-env.sh` | Environment setup with aliases and functions | `source ./setup-env.sh` |
-| `ollama-load-model.sh` | Load AI models into Ollama (wrapper) | `./ollama-load-model.sh -m MODEL` |
-| `load-ollama-models.sh` | Advanced model management with interactive menu | `./load-ollama-models.sh [options]` |
-| `ollama-api-helper.sh` | Interact with Ollama via API | `./ollama-api-helper.sh` |
-| `submit-test-workflow.sh` | Submit and manage test workflows | `./submit-test-workflow.sh [options]` |
-| `fix-common-issues.sh` | Fix common issues and check system health | `./fix-common-issues.sh` |
-| `deploy-full-workflow.sh` | Deploy the complete AI workflow template | `./deploy-full-workflow.sh` |
+| `ollama-load-model.sh` | Load AI models into Ollama (wrapper) | `./scripts/ollama-load-model.sh -m MODEL` |
+| `load-ollama-models.sh` | Advanced model management with interactive menu | `./scripts/load-ollama-models.sh [options]` |
+| `ollama-api-helper.sh` | Interact with Ollama via API | `./scripts/ollama-api-helper.sh` |
+| `submit-test-workflow.sh` | Submit and manage test workflows | `./scripts/submit-test-workflow.sh [options]` |
+| `fix-common-issues.sh` | Fix common issues and check system health | `./scripts/fix-common-issues.sh` |
+| `deploy-full-workflow.sh` | Deploy the complete AI workflow template | `./scripts/deploy-full-workflow.sh` |
 
 ### Key Features of Scripts
 
-**setup-crc-openshift.sh**
+**scripts/setup-crc-openshift.sh** (deprecated - use setup.sh instead)
 - Fully idempotent (safe to run multiple times)
 - Automatic password extraction from CRC
 - Handles pull secret configuration
@@ -138,14 +157,14 @@ load-model llama3.2:3b
 - Model testing capabilities
 - Both CLI and interactive modes
 
-**submit-test-workflow.sh**
+**scripts/submit-test-workflow.sh**
 - Automated workflow submission with defaults
 - Predefined sample documents for testing
 - Model availability checking
 - Workflow monitoring and management
 - Integrated with CRC environment setup
 
-**fix-common-issues.sh**
+**scripts/fix-common-issues.sh**
 - Interactive troubleshooter for known issues
 - Fixes Argo UI 502 errors automatically
 - Repairs workflow controller configuration
@@ -180,16 +199,16 @@ openshift-ui  # Open OpenShift Console
 
 ```bash
 # List available models
-./load-ollama-models.sh -l
+./scripts/load-ollama-models.sh -l
 
 # Load a specific model
-./ollama-load-model.sh -m mistral:7b
+./scripts/ollama-load-model.sh -m mistral:7b
 
 # Check loaded models
-./load-ollama-models.sh -s
+./scripts/load-ollama-models.sh -s
 
 # Test a model
-./ollama-api-helper.sh  # Choose option 3
+./scripts/ollama-api-helper.sh  # Choose option 3
 ```
 
 ### Monitoring Services
@@ -208,23 +227,23 @@ get-pods         # Show all pods
 
 ```bash
 # Submit with defaults (Kubernetes README, llama3.2:3b model)
-./submit-test-workflow.sh
+./scripts/submit-test-workflow.sh
 
 # Use a predefined sample document
-./submit-test-workflow.sh -s argo        # Argo Workflows README
-./submit-test-workflow.sh -s openshift   # OpenShift README
+./scripts/submit-test-workflow.sh -s argo        # Argo Workflows README
+./scripts/submit-test-workflow.sh -s openshift   # OpenShift README
 
 # Submit with custom document and model
-./submit-test-workflow.sh -d "https://example.com/document.txt" -m mistral:7b
+./scripts/submit-test-workflow.sh -d "https://example.com/document.txt" -m mistral:7b
 
 # Submit and watch the workflow progress
-./submit-test-workflow.sh -w
+./scripts/submit-test-workflow.sh -w
 
 # List all workflows
-./submit-test-workflow.sh -l
+./scripts/submit-test-workflow.sh -l
 
 # Get details of a specific workflow
-./submit-test-workflow.sh -g <workflow-name>
+./scripts/submit-test-workflow.sh -g <workflow-name>
 ```
 
 #### Using Helper Function (after sourcing setup-env.sh)
@@ -258,7 +277,7 @@ EOF
 
 ### Common Issues and Solutions
 
-**Quick Fix**: Run `./fix-common-issues.sh` for an interactive troubleshooter that can fix most issues automatically.
+**Quick Fix**: Run `./scripts/fix-common-issues.sh` for an interactive troubleshooter that can fix most issues automatically.
 
 1. **"oc command not found"**
    ```bash
@@ -331,36 +350,130 @@ oc get events -n argo-ai-demo --sort-by='.lastTimestamp'
 - [ ] Batch processing capabilities
 - [ ] API gateway for external integration
 
+## 🔧 Troubleshooting
+
+### Common Issues and Solutions
+
+#### 1. Argo UI Shows "Application is not available"
+**Problem**: The Argo Server pod is not ready due to authentication issues.
+
+**Solution**: The Helm chart has been updated to include `--auth-mode=server`. If you still face this issue:
+```bash
+# Check pod status
+oc get pods -n argo-ai-demo | grep argo-server
+
+# If pod is 0/1, upgrade the Helm release
+helm upgrade ai-pipeline ./helm/ai-document-pipeline \
+  --namespace argo-ai-demo \
+  --values ./helm/ai-document-pipeline/values-dev.yaml \
+  --no-hooks
+```
+
+#### 2. Workflow Controller RBAC Warnings
+**Problem**: Logs show warnings about `workflowartifactgctasks` and `workflowtaskresults`.
+
+**Solution**: These are optional CRDs and the warnings don't affect basic functionality. They can be safely ignored for development use.
+
+#### 3. Model Loading Job Fails
+**Problem**: The `load-models` job shows `CrashLoopBackOff` due to missing `jq` command.
+
+**Solution**: The models are actually loaded successfully. You can verify and clean up:
+```bash
+# Check loaded models
+curl -s https://ollama-argo-ai-demo.apps-crc.testing/api/tags --insecure | jq -r '.models[].name'
+
+# Delete the failed job
+oc delete job -l app.kubernetes.io/component=ollama-models -n argo-ai-demo
+```
+
+#### 4. Submit Test Workflow Script Fails
+**Problem**: Script can't find Ollama pod due to label mismatch.
+
+**Solution**: The script has been updated to use the correct label. Pull the latest changes or manually update:
+```bash
+# The correct label is:
+app.kubernetes.io/component=ollama
+```
+
+#### 5. Helm Installation Times Out
+**Problem**: `helm install` fails with timeout waiting for post-install hooks.
+
+**Solution**: Use `--no-hooks` flag or increase timeout:
+```bash
+# Install without hooks
+helm install ai-pipeline ./helm/ai-document-pipeline \
+  --create-namespace \
+  --namespace argo-ai-demo \
+  --values ./helm/ai-document-pipeline/values-dev.yaml \
+  --no-hooks
+```
+
+### Health Check Commands
+
+```bash
+# Check all pods status
+oc get pods -n argo-ai-demo
+
+# Check services and routes
+oc get svc,route -n argo-ai-demo
+
+# Test Ollama
+curl -s https://ollama-argo-ai-demo.apps-crc.testing/api/tags --insecure
+
+# Test Argo UI
+curl -s -o /dev/null -w "%{http_code}" https://argo-server-argo-ai-demo.apps-crc.testing --insecure
+```
+
 ## 🚦 Next Steps
 
 1. **Load AI Models**: If you haven't already, load at least one model:
    ```bash
-   ./ollama-load-model.sh -m llama3.2:3b
+   ./scripts/ollama-load-model.sh -m llama3.2:3b
    ```
 
-2. **Test the Pipeline**: Submit a test workflow to process a document
+2. **Use the Smart Inbox** (NEW!): Drop documents and let AI organize them:
+   ```bash
+   # Configure MinIO client
+   mc alias set myminio https://minio-argo-ai-demo.apps-crc.testing admin changeme
 
-3. **Customize Workflows**: Modify the workflow template for your specific use cases
+   # Drop any document into the inbox
+   mc cp invoice.pdf myminio/documents/inbox/
 
-4. **Add Monitoring**: Implement the ServiceMonitor for Prometheus integration
+   # Document will be automatically:
+   # - Classified (invoice/contract/technical/correspondence)
+   # - Prioritized (normal/urgent)
+   # - Moved to organized folder
+   # - Processed with appropriate workflow
+   ```
 
-5. **Scale Up**: Consider moving to a production OpenShift cluster for real workloads
+3. **Test the Pipeline**: Submit a test workflow to process a document manually
+
+4. **Customize Workflows**: Modify the workflow template for your specific use cases
+
+5. **Add Monitoring**: Implement the ServiceMonitor for Prometheus integration
+
+6. **Scale Up**: Consider moving to a production OpenShift cluster for real workloads
 
 ## 📚 Documentation
 
-- `IMPLEMENTATION_PLAN.md` - Detailed step-by-step implementation guide
-- `PLAN1.md` - Original project plan and architecture
-- `CLAUDE.md` - Additional implementation notes
-- **`DEMO.md`** - 🆕 **Comprehensive demo walkthrough with tables, diagrams, and real examples**
-- `PRODUCTION-DEPLOYMENT-PLAN.md` - Enterprise deployment strategies (Ansible, Python, Helm, GitOps, Terraform)
-- `SECURITY-AUDIT.md` - Security considerations and hardening guide
+All documentation has been organized in the [docs/](./docs/) directory:
+
+- **[docs/STATUS.md](./docs/STATUS.md)** - 🆕 **Current deployment status, known issues, and test results**
+- [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md) - Detailed step-by-step implementation guide
+- [docs/PLAN1.md](./docs/PLAN1.md) - Original project plan and architecture
+- [docs/CLAUDE.md](./docs/CLAUDE.md) - Additional implementation notes
+- **[docs/DEMO.md](./docs/DEMO.md)** - 🆕 **Comprehensive demo walkthrough with tables, diagrams, and real examples**
+- [docs/PRODUCTION-DEPLOYMENT-PLAN.md](./docs/PRODUCTION-DEPLOYMENT-PLAN.md) - Enterprise deployment strategies (Ansible, Python, Helm, GitOps, Terraform)
+- [docs/SECURITY-AUDIT.md](./docs/SECURITY-AUDIT.md) - Security considerations and hardening guide
+
+See [docs/README.md](./docs/README.md) for the complete documentation index.
 
 ## 🔐 Security Notice
 
 **⚠️ IMPORTANT**: This repository contains example credentials for local development. Before deploying to production or making this repository public:
 
-1. **Review `SECURITY-AUDIT.md`** for a complete security checklist
-2. **Run `./prepare-for-public.sh`** to check for hardcoded credentials
+1. **Review [docs/SECURITY-AUDIT.md](./docs/SECURITY-AUDIT.md)** for a complete security checklist
+2. **Run `./scripts/prepare-for-public.sh`** to check for hardcoded credentials
 3. **Use environment variables** instead of hardcoded passwords
 4. **Never commit** pull secrets, tokens, or actual passwords
 5. **Update all credentials** from their default values
@@ -373,7 +486,7 @@ Feel free to submit issues, fork the repository, and create pull requests for an
 
 ## 📄 License
 
-[Specify your license here]
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 

@@ -1,0 +1,81 @@
+{{- if .Values.dashboard.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ai-document-pipeline.fullname" . }}-dashboard-frontend
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard-frontend
+spec:
+  replicas: {{ .Values.dashboard.frontend.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ai-document-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dashboard-frontend
+  template:
+    metadata:
+      labels:
+        {{- include "ai-document-pipeline.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: dashboard-frontend
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: frontend
+        image: "{{ .Values.dashboard.frontend.image.repository }}:{{ .Values.dashboard.frontend.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.dashboard.frontend.image.pullPolicy }}
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: REACT_APP_API_URL
+          value: "http://{{ include "ai-document-pipeline.fullname" . }}-dashboard-backend.{{ include "ai-document-pipeline.namespace" . }}.svc.cluster.local:3001"
+        - name: REACT_APP_WS_URL
+          value: "ws://{{ include "ai-document-pipeline.fullname" . }}-dashboard-backend.{{ include "ai-document-pipeline.namespace" . }}.svc.cluster.local:3001"
+        {{- if .Values.dashboard.route.enabled }}
+        - name: REACT_APP_PUBLIC_API_URL
+          value: "https://{{ include "ai-document-pipeline.fullname" . }}-dashboard-api-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}"
+        - name: REACT_APP_PUBLIC_WS_URL
+          value: "wss://{{ include "ai-document-pipeline.fullname" . }}-dashboard-ws-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}"
+        {{- end }}
+        {{- with .Values.dashboard.frontend.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.dashboard.frontend.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: env-config
+          mountPath: /opt/app-root/src/env-config.js
+          subPath: env-config.js
+      volumes:
+      - name: env-config
+        configMap:
+          name: {{ include "ai-document-pipeline.fullname" . }}-dashboard-frontend-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

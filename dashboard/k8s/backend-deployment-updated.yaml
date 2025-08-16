@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-dashboard-backend
+  namespace: argo-ai-demo
+  labels:
+    app: ai-dashboard-backend
+    component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-dashboard-backend
+  template:
+    metadata:
+      labels:
+        app: ai-dashboard-backend
+        component: backend
+    spec:
+      serviceAccountName: ai-dashboard
+      containers:
+      - name: backend
+        image: quay.io/aasmith/ai-workflow-dashboard-backend:873c59c-dirty
+        ports:
+        - containerPort: 3001
+          name: http
+        env:
+        - name: NODE_ENV
+          value: production
+        - name: PORT
+          value: "3001"
+        - name: ARGO_SERVER
+          value: http://argo-server.argo-ai-demo.svc.cluster.local:2746
+        - name: ARGO_NAMESPACE
+          value: argo-ai-demo
+        - name: MINIO_ENDPOINT
+          value: minio.argo-ai-demo.svc.cluster.local:9000
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: accesskey
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: secretkey
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: data
+          mountPath: /opt/app-root/src/data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: dashboard-sqlite-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-dashboard-backend
+  namespace: argo-ai-demo
+  labels:
+    app: ai-dashboard-backend
+spec:
+  selector:
+    app: ai-dashboard-backend
+  ports:
+  - name: http
+    port: 3001
+    targetPort: 3001
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dashboard-sqlite-pvc
+  namespace: argo-ai-demo
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

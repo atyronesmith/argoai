@@ -1,0 +1,23 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ai-dashboard-ws
+  namespace: argo-ai-demo
+  labels:
+    app: ai-dashboard
+  annotations:
+    # Enable WebSocket support
+    haproxy.router.openshift.io/timeout: 5m
+spec:
+  host: ai-dashboard-ws-argo-ai-demo.apps-crc.testing
+  port:
+    targetPort: http
+  path: /ws
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  to:
+    kind: Service
+    name: ai-dashboard-backend
+    weight: 100
+  wildcardPolicy: None

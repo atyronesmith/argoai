@@ -1,0 +1,85 @@
+{{- if .Values.argo.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argo-server
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: argo-server
+spec:
+  replicas: {{ .Values.argo.server.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ai-document-pipeline.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: argo-server
+  template:
+    metadata:
+      labels:
+        {{- include "ai-document-pipeline.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: argo-server
+    spec:
+      serviceAccountName: argo-server
+      containers:
+      - name: argo-server
+        image: quay.io/argoproj/argocli:{{ .Values.argo.version }}
+        args:
+        - server
+        - --namespaced
+        # Set auth-mode to server to disable client authentication
+        # This allows the readiness probe to succeed without credentials
+        - --auth-mode=server
+        {{- if not .Values.argo.server.secure }}
+        - --secure=false
+        {{- end }}
+        ports:
+        - containerPort: 2746
+          name: web
+        readinessProbe:
+          httpGet:
+            path: /api/v1/info
+            port: 2746
+            {{- if .Values.argo.server.secure }}
+            scheme: HTTPS
+            {{- else }}
+            scheme: HTTP
+            {{- end }}
+          initialDelaySeconds: 10
+          periodSeconds: 20
+        livenessProbe:
+          httpGet:
+            path: /api/v1/info
+            port: 2746
+            {{- if .Values.argo.server.secure }}
+            scheme: HTTPS
+            {{- else }}
+            scheme: HTTP
+            {{- end }}
+          initialDelaySeconds: 10
+          periodSeconds: 60
+        resources:
+          {{- toYaml .Values.argo.server.resources | nindent 10 }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+        volumeMounts:
+        - mountPath: /tmp
+          name: tmp
+      volumes:
+      - emptyDir: {}
+        name: tmp
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

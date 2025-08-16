@@ -1,0 +1,23 @@
+{{- if and .Values.ollama.enabled .Values.ollama.route.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ollama
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  host: ollama-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+  port:
+    targetPort: api
+  to:
+    kind: Service
+    name: ollama
+    weight: 100
+  {{- if .Values.ollama.route.tls }}
+  tls:
+    termination: {{ .Values.ollama.route.tls.termination }}
+    insecureEdgeTerminationPolicy: {{ .Values.ollama.route.tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+{{- end }}

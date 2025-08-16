@@ -1,0 +1,48 @@
+{{- if and .Values.minio.enabled .Values.minio.route.enabled }}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: minio-api
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  host: minio-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+  port:
+    targetPort: api
+  to:
+    kind: Service
+    name: minio
+    weight: 100
+  {{- if .Values.minio.route.tls }}
+  tls:
+    termination: {{ .Values.minio.route.tls.termination }}
+    insecureEdgeTerminationPolicy: {{ .Values.minio.route.tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+---
+{{- if .Values.minio.route.console.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: minio-console
+  namespace: {{ include "ai-document-pipeline.namespace" . }}
+  labels:
+    {{- include "ai-document-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  host: minio-console-{{ include "ai-document-pipeline.namespace" . }}.{{ .Values.global.domain }}
+  port:
+    targetPort: console
+  to:
+    kind: Service
+    name: minio
+    weight: 100
+  {{- if .Values.minio.route.tls }}
+  tls:
+    termination: {{ .Values.minio.route.tls.termination }}
+    insecureEdgeTerminationPolicy: {{ .Values.minio.route.tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+{{- end }}
+{{- end }}

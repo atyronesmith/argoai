@@ -1,0 +1,169 @@
+# MinIO/S3 File Drop Sensor for AI Document Processing
+# This sensor triggers the document processing workflow when a file is uploaded to MinIO
+
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: minio-events
+  namespace: argo-ai-demo
+spec:
+  minio:
+    documents:
+      # MinIO endpoint
+      endpoint: minio.argo-ai-demo.svc.cluster.local:9000
+
+      # Bucket to watch
+      bucket:
+        name: document-uploads
+
+      # Watch for specific events
+      events:
+        - s3:ObjectCreated:Put
+        - s3:ObjectCreated:Post
+        - s3:ObjectCreated:CompleteMultipartUpload
+
+      # Optional: Filter by file prefix/suffix
+      filter:
+        prefix: "incoming/"
+        suffix: ".pdf"
+
+      # Use insecure connection (for development)
+      insecure: true
+
+      # MinIO credentials from secret
+      accessKey:
+        name: minio-credentials
+        key: root-user
+      secretKey:
+        name: minio-credentials
+        key: root-password
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: minio-workflow-trigger
+  namespace: argo-ai-demo
+spec:
+  template:
+    serviceAccountName: argo-events-sa
+  dependencies:
+    - name: minio-dep
+      eventSourceName: minio-events
+      eventName: documents
+  triggers:
+    - template:
+        name: trigger-document-workflow
+        k8s:
+          operation: create
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: process-document-
+                namespace: argo-ai-demo
+              spec:
+                serviceAccountName: argo
+                entrypoint: process-document
+                arguments:
+                  parameters:
+                  # Extract file information from the event
+                  - name: bucket_name
+                    value: ""  # Will be overridden by event data
+                  - name: object_key
+                    value: ""  # Will be overridden by event data
+                  - name: document_url
+                    value: ""  # Will be constructed
+                workflowTemplateRef:
+                  name: ai-document-processor
+          parameters:
+            # Extract data from MinIO event
+            - src:
+                dependencyName: minio-dep
+                dataKey: notification.0.s3.bucket.name
+              dest: spec.arguments.parameters.0.value
+            - src:
+                dependencyName: minio-dep
+                dataKey: notification.0.s3.object.key
+              dest: spec.arguments.parameters.1.value
+            # Construct the document URL
+            - src:
+                dependencyName: minio-dep
+                dataTemplate: "http://minio.argo-ai-demo.svc.cluster.local:9000/{{ .Input.notification.0.s3.bucket.name }}/{{ .Input.notification.0.s3.object.key }}"
+              dest: spec.arguments.parameters.2.value
+
+---
+# EventBus for communication
+apiVersion: argoproj.io/v1alpha1
+kind: EventBus
+metadata:
+  name: default
+  namespace: argo-ai-demo
+spec:
+  nats:
+    native:
+      replicas: 3
+      auth: token
+
+---
+# ServiceAccount for Argo Events
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argo-events-sa
+  namespace: argo-ai-demo
+
+---
+# Role for Argo Events
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argo-events-role
+  namespace: argo-ai-demo
+rules:
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - workflows
+      - workflowtemplates
+      - cronworkflows
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - pods/log
+      - configmaps
+      - secrets
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+      - patch
+      - delete
+
+---
+# RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argo-events-binding
+  namespace: argo-ai-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argo-events-role
+subjects:
+  - kind: ServiceAccount
+    name: argo-events-sa
+    namespace: argo-ai-demo
